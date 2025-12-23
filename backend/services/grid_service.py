@@ -4,12 +4,13 @@ Handles grid zone detection and assignment for AS9102 compliance.
 
 Manufacturing drawings typically have a grid reference system (e.g., A-H columns, 1-4 rows)
 that allows inspectors to quickly locate dimensions using zone references like "C4".
+
+NOTE: Drawing grids are typically read RIGHT-TO-LEFT for columns (H,G,F,E,D,C,B,A)
+and TOP-TO-BOTTOM for rows (4,3,2,1 or 1,2,3,4 depending on drawing).
 """
 from typing import Optional
 from dataclasses import dataclass
 
-from services.vision_service import VisionService, create_vision_service
-from models import Dimension, GridInfo, BoundingBox
 from config import NORMALIZED_COORD_SYSTEM
 
 
@@ -27,48 +28,42 @@ class GridService:
     Detects grid reference system and assigns zones to dimensions.
     """
     
-    # Default grid configurations for common drawing formats
-    DEFAULT_GRIDS = {
-        "A_SIZE": {
-            "columns": ["A", "B", "C", "D"],
-            "rows": ["1", "2", "3", "4"]
-        },
-        "B_SIZE": {
-            "columns": ["A", "B", "C", "D", "E", "F"],
-            "rows": ["1", "2", "3", "4"]
-        },
-        "C_SIZE": {
-            "columns": ["A", "B", "C", "D", "E", "F", "G", "H"],
-            "rows": ["1", "2", "3", "4", "5", "6"]
-        },
-        "D_SIZE": {
-            "columns": ["A", "B", "C", "D", "E", "F", "G", "H"],
-            "rows": ["1", "2", "3", "4"]
-        }
-    }
-    
-    def __init__(self, vision_service: Optional[VisionService] = None):
+    def __init__(self, vision_service=None):
         self.vision_service = vision_service
         self._zone_boundaries: Optional[ZoneBoundaries] = None
     
-    async def detect_grid(self, image_bytes: bytes) -> GridInfo:
+    async def detect_grid(self, image_bytes: bytes):
         """
         Detect the grid reference system on the drawing.
-        
-        Strategy:
-        1. Try visual detection via Gemini
-        2. If no grid detected, return GridInfo with detected=False
-        
-        Args:
-            image_bytes: PNG image data
-            
-        Returns:
-            GridInfo object
+        Returns GridInfo dict.
         """
+        from models import GridInfo
+        
         grid_info = GridInfo(detected=False)
         
         if not self.vision_service:
-            return grid_info
+            # Default to standard 8x4 grid (H-A, 4-1)
+            # Columns go H,G,F,E,D,C,B,A (right to left on drawing, but left to right in image)
+            # Rows go 4,3,2,1 (top to bottom)
+            columns = ["H", "G", "F", "E", "D", "C", "B", "A"]
+            rows = ["4", "3", "2", "1"]
+            
+            self._zone_boundaries = ZoneBoundaries(
+                columns=columns,
+                rows=rows,
+                column_edges=self._calculate_edges(len(columns)),
+                row_edges=self._calculate_edges(len(rows))
+            )
+            
+            return GridInfo(
+                detected=True,
+                columns=columns,
+                rows=rows,
+                boundaries={
+                    "column_edges": self._zone_boundaries.column_edges,
+                    "row_edges": self._zone_boundaries.row_edges
+                }
+            )
         
         try:
             grid_data = await self.vision_service.detect_grid(image_bytes)
@@ -79,7 +74,6 @@ class GridService:
                 boundaries = grid_data.get("boundaries", {})
                 
                 if columns and rows:
-                    # Store boundaries for zone assignment
                     self._zone_boundaries = ZoneBoundaries(
                         columns=columns,
                         rows=rows,
@@ -94,8 +88,27 @@ class GridService:
                         boundaries=boundaries
                     )
         except Exception as e:
-            # Grid detection is optional - log and continue
-            print(f"Grid detection error (continuing): {e}")
+            print(f"Grid detection error (using default): {e}")
+            # Fall back to default grid
+            columns = ["H", "G", "F", "E", "D", "C", "B", "A"]
+            rows = ["4", "3", "2", "1"]
+            
+            self._zone_boundaries = ZoneBoundaries(
+                columns=columns,
+                rows=rows,
+                column_edges=self._calculate_edges(len(columns)),
+                row_edges=self._calculate_edges(len(rows))
+            )
+            
+            grid_info = GridInfo(
+                detected=True,
+                columns=columns,
+                rows=rows,
+                boundaries={
+                    "column_edges": self._zone_boundaries.column_edges,
+                    "row_edges": self._zone_boundaries.row_edges
+                }
+            )
         
         return grid_info
     
@@ -107,10 +120,7 @@ class GridService:
         ]
     
     def set_grid_manually(self, columns: list[str], rows: list[str]) -> None:
-        """
-        Manually set grid configuration.
-        Useful for testing or when auto-detection fails.
-        """
+        """Manually set grid configuration."""
         self._zone_boundaries = ZoneBoundaries(
             columns=columns,
             rows=rows,
@@ -118,7 +128,7 @@ class GridService:
             row_edges=self._calculate_edges(len(rows))
         )
     
-    def assign_zone(self, bounding_box: BoundingBox) -> Optional[str]:
+    def assign_zone(self, bounding_box) -> Optional[str]:
         """
         Determine which zone a dimension falls into based on its bounding box.
         
@@ -126,22 +136,22 @@ class GridService:
             bounding_box: The dimension's bounding box (normalized 0-1000)
             
         Returns:
-            Zone string (e.g., "C4") or None if no grid configured
+            Zone string (e.g., "F4") or None if no grid configured
         """
         if not self._zone_boundaries:
             return None
         
         # Use center point of bounding box
-        center_x = bounding_box.center_x
-        center_y = bounding_box.center_y
+        center_x = (bounding_box.xmin + bounding_box.xmax) // 2
+        center_y = (bounding_box.ymin + bounding_box.ymax) // 2
         
-        # Find column
+        # Find column (x position)
         column_idx = self._find_zone_index(
             center_x, 
             self._zone_boundaries.column_edges
         )
         
-        # Find row
+        # Find row (y position)
         row_idx = self._find_zone_index(
             center_y,
             self._zone_boundaries.row_edges
@@ -156,16 +166,7 @@ class GridService:
         return f"{column}{row}"
     
     def _find_zone_index(self, position: int, edges: list[int]) -> Optional[int]:
-        """
-        Find which zone a position falls into based on edge boundaries.
-        
-        Args:
-            position: Normalized position (0-1000)
-            edges: List of edge positions (one more than number of zones)
-            
-        Returns:
-            Zone index (0-based) or None if out of bounds
-        """
+        """Find which zone a position falls into based on edge boundaries."""
         for i in range(len(edges) - 1):
             if edges[i] <= position < edges[i + 1]:
                 return i
@@ -176,33 +177,17 @@ class GridService:
         
         return None
     
-    def assign_zones_to_dimensions(self, dimensions: list[Dimension]) -> list[Dimension]:
-        """
-        Assign zone references to a list of dimensions.
-        
-        Args:
-            dimensions: List of Dimension objects
-            
-        Returns:
-            Same list with zone field populated
-        """
+    def assign_zones_to_dimensions(self, dimensions: list) -> list:
+        """Assign zone references to a list of dimensions."""
         for dim in dimensions:
             dim.zone = self.assign_zone(dim.bounding_box)
         return dimensions
     
-    def recalculate_zone(self, new_bounding_box: BoundingBox) -> Optional[str]:
-        """
-        Recalculate zone for a moved balloon.
-        
-        Args:
-            new_bounding_box: Updated bounding box after user drag
-            
-        Returns:
-            New zone string or None
-        """
+    def recalculate_zone(self, new_bounding_box) -> Optional[str]:
+        """Recalculate zone for a moved balloon."""
         return self.assign_zone(new_bounding_box)
 
 
-def create_grid_service(vision_service: Optional[VisionService] = None) -> GridService:
+def create_grid_service(vision_service=None):
     """Factory function to create grid service"""
     return GridService(vision_service=vision_service)
