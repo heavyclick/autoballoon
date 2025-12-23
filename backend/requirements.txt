@@ -34,6 +34,8 @@ python-jose[cryptography]>=3.3.0
 # Email - Resend
 resend>=0.8.0
 
+email-validator>=2.0.0
+
 # Environment Variables
 python-dotenv>=1.0.0
 
