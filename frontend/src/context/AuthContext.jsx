@@ -1,12 +1,8 @@
-/**
- * AuthContext
- * Manages authentication state, user info, and Pro status
- */
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { API_BASE_URL } from '../constants/config';
 
 const AuthContext = createContext(null);
 
+const API_BASE_URL = "https://autoballoon-production.up.railway.app/api";
 const TOKEN_KEY = 'autoballoon_token';
 const USER_KEY = 'autoballoon_user';
 
@@ -15,7 +11,6 @@ export function AuthProvider({ children }) {
   const [token, setToken] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load saved auth on mount
   useEffect(() => {
     const savedToken = localStorage.getItem(TOKEN_KEY);
     const savedUser = localStorage.getItem(USER_KEY);
@@ -32,33 +27,6 @@ export function AuthProvider({ children }) {
     setIsLoading(false);
   }, []);
 
-  // Verify token is still valid on load
-  useEffect(() => {
-    if (token) {
-      verifyToken();
-    }
-  }, [token]);
-
-  const verifyToken = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/me`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      if (response.ok) {
-        const userData = await response.json();
-        setUser(userData);
-        localStorage.setItem(USER_KEY, JSON.stringify(userData));
-      } else {
-        logout();
-      }
-    } catch (err) {
-      console.error('Token verification failed:', err);
-    }
-  };
-
   const login = useCallback((accessToken, userData) => {
     setToken(accessToken);
     setUser(userData);
@@ -74,26 +42,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const refreshUser = useCallback(async () => {
-    if (!token) return;
-    
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/me`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      if (response.ok) {
-        const userData = await response.json();
-        setUser(userData);
-        localStorage.setItem(USER_KEY, JSON.stringify(userData));
-        return userData;
-      }
-    } catch (err) {
-      console.error('Failed to refresh user:', err);
-    }
     return null;
-  }, [token]);
+  }, []);
 
   const value = {
     user,
