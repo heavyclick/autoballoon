@@ -2,192 +2,111 @@
 Grid Service
 Handles grid zone detection and assignment for AS9102 compliance.
 
-Manufacturing drawings typically have a grid reference system (e.g., A-H columns, 1-4 rows)
-that allows inspectors to quickly locate dimensions using zone references like "C4".
+Drawing grids are typically:
+- Columns: H, G, F, E, D, C, B, A (LEFT to RIGHT on the image)
+- Rows: 4, 3, 2, 1 (TOP to BOTTOM on the image)
 
-NOTE: Drawing grids are typically read RIGHT-TO-LEFT for columns (H,G,F,E,D,C,B,A)
-and TOP-TO-BOTTOM for rows (4,3,2,1 or 1,2,3,4 depending on drawing).
+So position (0,0) = top-left = H4
+And position (1000,1000) = bottom-right = A1
 """
 from typing import Optional
 from dataclasses import dataclass
 
-from config import NORMALIZED_COORD_SYSTEM
 
-
-@dataclass
+@dataclass 
 class ZoneBoundaries:
-    """Stores calculated zone boundaries"""
     columns: list[str]
     rows: list[str]
-    column_edges: list[int]  # X positions (normalized 0-1000)
-    row_edges: list[int]     # Y positions (normalized 0-1000)
+    column_edges: list[int]
+    row_edges: list[int]
 
 
 class GridService:
-    """
-    Detects grid reference system and assigns zones to dimensions.
-    """
-    
     def __init__(self, vision_service=None):
         self.vision_service = vision_service
         self._zone_boundaries: Optional[ZoneBoundaries] = None
+        # Set default grid immediately
+        self._set_default_grid()
     
-    async def detect_grid(self, image_bytes: bytes):
-        """
-        Detect the grid reference system on the drawing.
-        Returns GridInfo dict.
-        """
-        from models import GridInfo
+    def _set_default_grid(self):
+        """Set up default 8x4 grid (H-A columns, 4-1 rows)"""
+        # Columns from LEFT to RIGHT on image: H, G, F, E, D, C, B, A
+        columns = ["H", "G", "F", "E", "D", "C", "B", "A"]
+        # Rows from TOP to BOTTOM on image: 4, 3, 2, 1
+        rows = ["4", "3", "2", "1"]
         
-        grid_info = GridInfo(detected=False)
-        
-        if not self.vision_service:
-            # Default to standard 8x4 grid (H-A, 4-1)
-            # Columns go H,G,F,E,D,C,B,A (right to left on drawing, but left to right in image)
-            # Rows go 4,3,2,1 (top to bottom)
-            columns = ["H", "G", "F", "E", "D", "C", "B", "A"]
-            rows = ["4", "3", "2", "1"]
-            
-            self._zone_boundaries = ZoneBoundaries(
-                columns=columns,
-                rows=rows,
-                column_edges=self._calculate_edges(len(columns)),
-                row_edges=self._calculate_edges(len(rows))
-            )
-            
-            return GridInfo(
-                detected=True,
-                columns=columns,
-                rows=rows,
-                boundaries={
-                    "column_edges": self._zone_boundaries.column_edges,
-                    "row_edges": self._zone_boundaries.row_edges
-                }
-            )
-        
-        try:
-            grid_data = await self.vision_service.detect_grid(image_bytes)
-            
-            if grid_data:
-                columns = grid_data.get("columns", [])
-                rows = grid_data.get("rows", [])
-                boundaries = grid_data.get("boundaries", {})
-                
-                if columns and rows:
-                    self._zone_boundaries = ZoneBoundaries(
-                        columns=columns,
-                        rows=rows,
-                        column_edges=boundaries.get("column_edges", self._calculate_edges(len(columns))),
-                        row_edges=boundaries.get("row_edges", self._calculate_edges(len(rows)))
-                    )
-                    
-                    grid_info = GridInfo(
-                        detected=True,
-                        columns=columns,
-                        rows=rows,
-                        boundaries=boundaries
-                    )
-        except Exception as e:
-            print(f"Grid detection error (using default): {e}")
-            # Fall back to default grid
-            columns = ["H", "G", "F", "E", "D", "C", "B", "A"]
-            rows = ["4", "3", "2", "1"]
-            
-            self._zone_boundaries = ZoneBoundaries(
-                columns=columns,
-                rows=rows,
-                column_edges=self._calculate_edges(len(columns)),
-                row_edges=self._calculate_edges(len(rows))
-            )
-            
-            grid_info = GridInfo(
-                detected=True,
-                columns=columns,
-                rows=rows,
-                boundaries={
-                    "column_edges": self._zone_boundaries.column_edges,
-                    "row_edges": self._zone_boundaries.row_edges
-                }
-            )
-        
-        return grid_info
-    
-    def _calculate_edges(self, count: int) -> list[int]:
-        """Calculate evenly distributed edges for a given count"""
-        return [
-            int(i * NORMALIZED_COORD_SYSTEM / count)
-            for i in range(count + 1)
-        ]
-    
-    def set_grid_manually(self, columns: list[str], rows: list[str]) -> None:
-        """Manually set grid configuration."""
         self._zone_boundaries = ZoneBoundaries(
             columns=columns,
             rows=rows,
-            column_edges=self._calculate_edges(len(columns)),
-            row_edges=self._calculate_edges(len(rows))
+            column_edges=[0, 125, 250, 375, 500, 625, 750, 875, 1000],
+            row_edges=[0, 250, 500, 750, 1000]
+        )
+    
+    async def detect_grid(self, image_bytes: bytes = None):
+        """Return grid info"""
+        from models import GridInfo
+        
+        if not self._zone_boundaries:
+            self._set_default_grid()
+        
+        return GridInfo(
+            detected=True,
+            columns=self._zone_boundaries.columns,
+            rows=self._zone_boundaries.rows,
+            boundaries={
+                "column_edges": self._zone_boundaries.column_edges,
+                "row_edges": self._zone_boundaries.row_edges
+            }
         )
     
     def assign_zone(self, bounding_box) -> Optional[str]:
         """
-        Determine which zone a dimension falls into based on its bounding box.
+        Determine zone from bounding box position.
         
-        Args:
-            bounding_box: The dimension's bounding box (normalized 0-1000)
-            
-        Returns:
-            Zone string (e.g., "F4") or None if no grid configured
+        The coordinate system is normalized 0-1000:
+        - x=0 is LEFT edge (column H)
+        - x=1000 is RIGHT edge (column A)
+        - y=0 is TOP edge (row 4)
+        - y=1000 is BOTTOM edge (row 1)
         """
         if not self._zone_boundaries:
-            return None
+            self._set_default_grid()
         
-        # Use center point of bounding box
+        # Get center point
         center_x = (bounding_box.xmin + bounding_box.xmax) // 2
         center_y = (bounding_box.ymin + bounding_box.ymax) // 2
         
-        # Find column (x position)
-        column_idx = self._find_zone_index(
-            center_x, 
-            self._zone_boundaries.column_edges
-        )
+        # Find column index (x position)
+        col_idx = 0
+        for i, edge in enumerate(self._zone_boundaries.column_edges[1:], 0):
+            if center_x < edge:
+                col_idx = i
+                break
+            col_idx = i
         
-        # Find row (y position)
-        row_idx = self._find_zone_index(
-            center_y,
-            self._zone_boundaries.row_edges
-        )
+        # Find row index (y position)  
+        row_idx = 0
+        for i, edge in enumerate(self._zone_boundaries.row_edges[1:], 0):
+            if center_y < edge:
+                row_idx = i
+                break
+            row_idx = i
         
-        if column_idx is None or row_idx is None:
-            return None
+        # Clamp indices
+        col_idx = min(col_idx, len(self._zone_boundaries.columns) - 1)
+        row_idx = min(row_idx, len(self._zone_boundaries.rows) - 1)
         
-        column = self._zone_boundaries.columns[column_idx]
+        column = self._zone_boundaries.columns[col_idx]
         row = self._zone_boundaries.rows[row_idx]
         
         return f"{column}{row}"
     
-    def _find_zone_index(self, position: int, edges: list[int]) -> Optional[int]:
-        """Find which zone a position falls into based on edge boundaries."""
-        for i in range(len(edges) - 1):
-            if edges[i] <= position < edges[i + 1]:
-                return i
-        
-        # Handle edge case: position exactly at last edge
-        if position == edges[-1] and len(edges) > 1:
-            return len(edges) - 2
-        
-        return None
-    
     def assign_zones_to_dimensions(self, dimensions: list) -> list:
-        """Assign zone references to a list of dimensions."""
+        """Assign zone references to all dimensions"""
         for dim in dimensions:
             dim.zone = self.assign_zone(dim.bounding_box)
         return dimensions
-    
-    def recalculate_zone(self, new_bounding_box) -> Optional[str]:
-        """Recalculate zone for a moved balloon."""
-        return self.assign_zone(new_bounding_box)
 
 
 def create_grid_service(vision_service=None):
-    """Factory function to create grid service"""
     return GridService(vision_service=vision_service)
