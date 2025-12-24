@@ -1,34 +1,32 @@
 """
 Usage Tracking Routes
-Handles free tier usage limits
+Handles free tier usage limits using Supabase
 """
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Header, Query, HTTPException
 from typing import Optional
-from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timedelta
+import os
 
 router = APIRouter(prefix="/api/usage", tags=["usage"])
 
-# In-memory storage (resets on server restart - use Supabase for persistence)
-usage_store = {}
+# Supabase setup
+from supabase import create_client, Client
 
-class UsageResponse(BaseModel):
-    count: int
-    limit: int
-    remaining: int
-    can_process: bool
-    is_pro: bool
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 
-class IncrementResponse(BaseModel):
-    count: int
-    limit: int
-    remaining: int
-    can_process: bool
-    is_pro: bool
+FREE_TIER_LIMIT = 3
+
+def get_supabase() -> Client:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return None
+    return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 
-def get_month_key():
-    return datetime.now().strftime("%Y-%m")
+def get_month_start():
+    """Get the first day of current month"""
+    now = datetime.now()
+    return datetime(now.year, now.month, 1).isoformat()
 
 
 @router.get("/check")
@@ -38,18 +36,36 @@ async def check_usage(
 ):
     """Check current usage for visitor or authenticated user"""
     
+    supabase = get_supabase()
     is_pro = False
-    user_key = visitor_id or "anonymous"
+    user_id = None
+    identifier = visitor_id or "anonymous"
     
+    # Check if authenticated user
     if authorization and authorization.startswith("Bearer "):
         token = authorization.split(" ")[1]
-        user_key = f"user_{token[:16]}"
+        # TODO: Verify JWT and get user_id
+        # For now, use token prefix as identifier
+        identifier = f"user_{token[:16]}"
     
-    month_key = get_month_key()
-    storage_key = f"{user_key}_{month_key}"
+    count = 0
     
-    count = usage_store.get(storage_key, 0)
-    limit = 999999 if is_pro else 3
+    if supabase:
+        try:
+            # Get usage count for this month
+            month_start = get_month_start()
+            
+            result = supabase.table("usage").select("*").eq(
+                "visitor_id", identifier
+            ).gte("created_at", month_start).execute()
+            
+            count = len(result.data) if result.data else 0
+            
+        except Exception as e:
+            print(f"Supabase error: {e}")
+            count = 0
+    
+    limit = 999999 if is_pro else FREE_TIER_LIMIT
     remaining = max(0, limit - count)
     
     return {
@@ -68,22 +84,38 @@ async def increment_usage(
 ):
     """Increment usage count after successful processing"""
     
+    supabase = get_supabase()
     is_pro = False
-    user_key = visitor_id or "anonymous"
+    identifier = visitor_id or "anonymous"
     
     if authorization and authorization.startswith("Bearer "):
         token = authorization.split(" ")[1]
-        user_key = f"user_{token[:16]}"
+        identifier = f"user_{token[:16]}"
     
-    month_key = get_month_key()
-    storage_key = f"{user_key}_{month_key}"
+    count = 0
     
-    # Increment
-    current = usage_store.get(storage_key, 0)
-    usage_store[storage_key] = current + 1
+    if supabase:
+        try:
+            # Insert new usage record
+            supabase.table("usage").insert({
+                "visitor_id": identifier,
+                "action": "process",
+                "created_at": datetime.now().isoformat()
+            }).execute()
+            
+            # Get updated count for this month
+            month_start = get_month_start()
+            result = supabase.table("usage").select("*").eq(
+                "visitor_id", identifier
+            ).gte("created_at", month_start).execute()
+            
+            count = len(result.data) if result.data else 1
+            
+        except Exception as e:
+            print(f"Supabase error: {e}")
+            count = 1
     
-    count = usage_store[storage_key]
-    limit = 999999 if is_pro else 3
+    limit = 999999 if is_pro else FREE_TIER_LIMIT
     remaining = max(0, limit - count)
     
     return {
