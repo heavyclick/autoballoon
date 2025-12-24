@@ -206,26 +206,66 @@ function RevisionCompare({ onClose, onComplete }) {
         const dimsB = dataB.dimensions || [];
         const changes = { added: [], removed: [], modified: [], unchanged: [] };
         
-        dimsB.forEach(dimB => {
-          const matchA = dimsA.find(dimA => 
-            Math.abs(dimA.bounding_box.xmin - dimB.bounding_box.xmin) < 50 &&
-            Math.abs(dimA.bounding_box.ymin - dimB.bounding_box.ymin) < 50
-          );
+        // Filter out dimensions in the title block area (bottom 20% of drawing)
+        const filterTitleBlock = (dims) => dims.filter(d => {
+          const centerY = (d.bounding_box.ymin + d.bounding_box.ymax) / 2;
+          return centerY < 800; // Exclude bottom 20%
+        });
+        
+        const filteredA = filterTitleBlock(dimsA);
+        const filteredB = filterTitleBlock(dimsB);
+        
+        // Use tighter tolerance for matching (20 instead of 50)
+        const TOLERANCE = 20;
+        
+        filteredB.forEach(dimB => {
+          const matchA = filteredA.find(dimA => {
+            const centerAX = (dimA.bounding_box.xmin + dimA.bounding_box.xmax) / 2;
+            const centerAY = (dimA.bounding_box.ymin + dimA.bounding_box.ymax) / 2;
+            const centerBX = (dimB.bounding_box.xmin + dimB.bounding_box.xmax) / 2;
+            const centerBY = (dimB.bounding_box.ymin + dimB.bounding_box.ymax) / 2;
+            
+            return Math.abs(centerAX - centerBX) < TOLERANCE && 
+                   Math.abs(centerAY - centerBY) < TOLERANCE;
+          });
           
-          if (!matchA) changes.added.push({ ...dimB, changeType: 'added' });
-          else if (matchA.value !== dimB.value) changes.modified.push({ ...dimB, changeType: 'modified', oldValue: matchA.value, newValue: dimB.value });
-          else changes.unchanged.push({ ...dimB, changeType: 'unchanged' });
+          if (!matchA) {
+            changes.added.push({ ...dimB, changeType: 'added' });
+          } else if (matchA.value !== dimB.value) {
+            changes.modified.push({ ...dimB, changeType: 'modified', oldValue: matchA.value, newValue: dimB.value });
+          } else {
+            changes.unchanged.push({ ...dimB, changeType: 'unchanged' });
+          }
         });
         
-        dimsA.forEach(dimA => {
-          const matchB = dimsB.find(dimB => 
-            Math.abs(dimA.bounding_box.xmin - dimB.bounding_box.xmin) < 50 &&
-            Math.abs(dimA.bounding_box.ymin - dimB.bounding_box.ymin) < 50
-          );
-          if (!matchB) changes.removed.push({ ...dimA, changeType: 'removed' });
+        filteredA.forEach(dimA => {
+          const centerAX = (dimA.bounding_box.xmin + dimA.bounding_box.xmax) / 2;
+          const centerAY = (dimA.bounding_box.ymin + dimA.bounding_box.ymax) / 2;
+          
+          const matchB = filteredB.find(dimB => {
+            const centerBX = (dimB.bounding_box.xmin + dimB.bounding_box.xmax) / 2;
+            const centerBY = (dimB.bounding_box.ymin + dimB.bounding_box.ymax) / 2;
+            
+            return Math.abs(centerAX - centerBX) < TOLERANCE && 
+                   Math.abs(centerAY - centerBY) < TOLERANCE;
+          });
+          
+          if (!matchB) {
+            changes.removed.push({ ...dimA, changeType: 'removed' });
+          }
         });
         
-        setComparisonResult({ revA: dataA, revB: dataB, changes, summary: { added: changes.added.length, removed: changes.removed.length, modified: changes.modified.length, unchanged: changes.unchanged.length } });
+        setComparisonResult({ 
+          revA: dataA, 
+          revB: dataB, 
+          changes, 
+          summary: { 
+            added: changes.added.length, 
+            removed: changes.removed.length, 
+            modified: changes.modified.length, 
+            unchanged: changes.unchanged.length 
+          } 
+        });
       }
     } catch (err) {
       console.error('Comparison failed:', err);
