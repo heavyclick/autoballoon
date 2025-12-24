@@ -1,12 +1,7 @@
-/**
- * useUsage Hook
- * Tracks free tier usage limits
- */
-
 import { useState, useEffect } from 'react';
-import { API_BASE_URL } from '../constants/config';
 
-// Generate a unique visitor ID
+const API_BASE_URL = "https://autoballoon-production.up.railway.app/api";
+
 function generateVisitorId() {
   const stored = localStorage.getItem('autoballoon_visitor_id');
   if (stored) return stored;
@@ -21,44 +16,18 @@ export function useUsage() {
   const [usage, setUsage] = useState({ used: 0, limit: 3, remaining: 3 });
   const [loading, setLoading] = useState(true);
 
-  // Fetch current usage on mount
   useEffect(() => {
-    async function fetchUsage() {
-      try {
-        const response = await fetch(`${API_BASE_URL}/usage/check?visitor_id=${visitorId}`);
-        if (response.ok) {
-          const data = await response.json();
-          setUsage(data);
-        }
-      } catch (err) {
-        console.log('Usage check failed:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchUsage();
-  }, [visitorId]);
+    setLoading(false);
+  }, []);
 
-  // Increment usage after processing
   const incrementUsage = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/usage/increment?visitor_id=${visitorId}`, {
-        method: 'POST'
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setUsage(prev => ({
-          ...prev,
-          used: data.used,
-          remaining: data.remaining
-        }));
-      }
-    } catch (err) {
-      console.log('Usage increment failed:', err);
-    }
+    setUsage(prev => ({
+      ...prev,
+      used: prev.used + 1,
+      remaining: Math.max(0, prev.remaining - 1)
+    }));
   };
 
-  // Check if should show paywall
   const shouldShowPaywall = () => {
     return usage.remaining <= 0;
   };
