@@ -29,16 +29,14 @@ export function useUsage() {
 
   const fetchUsage = useCallback(async () => {
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/usage/check?visitor_id=${visitorId}`
-      );
-
+      const response = await fetch(`${API_BASE_URL}/usage/check?visitor_id=${visitorId}`);
       if (response.ok) {
         const data = await response.json();
+        console.log('Usage data from API:', data); // Debug log
         setUsage({
           count: data.count || 0,
           limit: data.limit || FREE_TIER_LIMIT,
-          remaining: data.remaining || FREE_TIER_LIMIT,
+          remaining: data.remaining ?? (FREE_TIER_LIMIT - (data.count || 0)),
           canProcess: data.can_process !== false,
           isPro: data.is_pro || false,
         });
@@ -56,24 +54,23 @@ export function useUsage() {
 
   const incrementUsage = useCallback(async () => {
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/usage/increment?visitor_id=${visitorId}`,
-        { method: 'POST' }
-      );
-
+      const response = await fetch(`${API_BASE_URL}/usage/increment?visitor_id=${visitorId}`, { method: 'POST' });
       if (response.ok) {
         const data = await response.json();
+        console.log('Increment response:', data); // Debug log
         setUsage({
           count: data.count || 0,
           limit: data.limit || FREE_TIER_LIMIT,
-          remaining: data.remaining || 0,
+          remaining: data.remaining ?? 0,
           canProcess: data.can_process !== false,
           isPro: data.is_pro || false,
         });
+        return data;
       }
     } catch (err) {
       console.error('Failed to increment usage:', err);
     }
+    return null;
   }, [visitorId]);
 
   return {
@@ -82,7 +79,7 @@ export function useUsage() {
     visitorId,
     incrementUsage,
     refreshUsage: fetchUsage,
-    canProcess: () => usage.remaining > 0,
-    shouldShowPaywall: () => usage.remaining <= 0,
+    canProcess: () => usage.remaining > 0 || usage.isPro,
+    shouldShowPaywall: () => !usage.isPro && usage.remaining <= 0,
   };
 }
