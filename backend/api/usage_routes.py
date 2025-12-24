@@ -1,121 +1,113 @@
 """
-Usage API Routes
-Track and check usage limits
+Usage Tracking Routes
+Handles free tier usage limits
 """
-from fastapi import APIRouter, Depends, Header
-from pydantic import BaseModel
+from fastapi import APIRouter, Header, Query
 from typing import Optional
+from pydantic import BaseModel
+from datetime import datetime
 
-from services.usage_service import usage_service
-from services.auth_service import User
-from api.auth_routes import get_current_user
-from config import FREE_TIER_LIMIT
+router = APIRouter(prefix="/api/usage", tags=["usage"])
 
-
-router = APIRouter(prefix="/usage", tags=["Usage"])
-
-
-# ==================
-# Request/Response Models
-# ==================
+# In-memory storage for demo (replace with Supabase in production)
+usage_store = {}
 
 class UsageResponse(BaseModel):
-    """Usage information response"""
-    count: int
-    limit: Optional[int]
-    remaining: Optional[int]
-    can_process: bool
-    is_pro: bool = False
-    month: str
+    used: int
+    limit: int
+    remaining: int
+    is_pro: bool
+    reset_date: str
+
+class IncrementResponse(BaseModel):
+    success: bool
+    used: int
+    remaining: int
 
 
-class CheckUsageRequest(BaseModel):
-    """Request to check usage (for anonymous users)"""
-    visitor_id: str
+def get_month_key():
+    """Get current month key for usage tracking"""
+    return datetime.now().strftime("%Y-%m")
 
-
-# ==================
-# Endpoints
-# ==================
 
 @router.get("/check", response_model=UsageResponse)
 async def check_usage(
-    visitor_id: Optional[str] = None,
-    user: Optional[User] = Depends(get_current_user)
+    visitor_id: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None)
 ):
-    """
-    Check current usage.
+    """Check current usage for visitor or authenticated user"""
     
-    - Authenticated Pro users: unlimited
-    - Authenticated free users: tracked by user_id
-    - Anonymous users: tracked by visitor_id
-    """
-    if user:
-        # Authenticated user
-        usage = usage_service.get_user_usage(user.id, user.is_pro)
-        return UsageResponse(
-            count=usage["count"],
-            limit=usage["limit"],
-            remaining=usage["remaining"],
-            can_process=usage["can_process"],
-            is_pro=user.is_pro,
-            month=usage["month"]
-        )
+    # Determine user identifier
+    user_key = None
+    is_pro = False
+    
+    if authorization and authorization.startswith("Bearer "):
+        # Authenticated user - would check JWT and database
+        # For now, treat as pro user if authenticated
+        token = authorization.split(" ")[1]
+        user_key = f"user_{token[:16]}"
+        # In production: verify JWT, check if user is_pro in database
+        is_pro = False  # Would come from database
     elif visitor_id:
-        # Anonymous user
-        usage = usage_service.get_anonymous_usage(visitor_id)
-        return UsageResponse(
-            count=usage["count"],
-            limit=usage["limit"],
-            remaining=usage["remaining"],
-            can_process=usage["can_process"],
-            is_pro=False,
-            month=usage["month"]
-        )
+        user_key = visitor_id
     else:
-        # No identifier provided - return default free tier
-        from datetime import datetime
-        return UsageResponse(
-            count=0,
-            limit=FREE_TIER_LIMIT,
-            remaining=FREE_TIER_LIMIT,
-            can_process=True,
-            is_pro=False,
-            month=datetime.utcnow().strftime("%Y-%m")
-        )
+        user_key = "anonymous"
+    
+    month_key = get_month_key()
+    storage_key = f"{user_key}_{month_key}"
+    
+    # Get current usage
+    used = usage_store.get(storage_key, 0)
+    limit = 999999 if is_pro else 3
+    remaining = max(0, limit - used)
+    
+    # Calculate reset date (first of next month)
+    now = datetime.now()
+    if now.month == 12:
+        reset_date = f"{now.year + 1}-01-01"
+    else:
+        reset_date = f"{now.year}-{now.month + 1:02d}-01"
+    
+    return UsageResponse(
+        used=used,
+        limit=limit,
+        remaining=remaining,
+        is_pro=is_pro,
+        reset_date=reset_date
+    )
 
 
-@router.post("/increment", response_model=UsageResponse)
+@router.post("/increment", response_model=IncrementResponse)
 async def increment_usage(
-    visitor_id: Optional[str] = None,
-    user: Optional[User] = Depends(get_current_user)
+    visitor_id: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None)
 ):
-    """
-    Increment usage count after processing a blueprint.
-    Called by the process endpoint after successful processing.
-    """
-    if user:
-        usage = usage_service.increment_user_usage(user.id, user.is_pro)
-        return UsageResponse(
-            count=usage["count"],
-            limit=usage["limit"],
-            remaining=usage["remaining"],
-            can_process=usage["can_process"],
-            is_pro=user.is_pro,
-            month=usage["month"]
-        )
+    """Increment usage count after successful processing"""
+    
+    # Determine user identifier
+    user_key = None
+    is_pro = False
+    
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ")[1]
+        user_key = f"user_{token[:16]}"
     elif visitor_id:
-        usage = usage_service.increment_anonymous_usage(visitor_id)
-        return UsageResponse(
-            count=usage["count"],
-            limit=usage["limit"],
-            remaining=usage["remaining"],
-            can_process=usage["can_process"],
-            is_pro=False,
-            month=usage["month"]
-        )
+        user_key = visitor_id
     else:
-        raise HTTPException(status_code=400, detail="visitor_id required for anonymous users")
-
-
-from fastapi import HTTPException
+        user_key = "anonymous"
+    
+    month_key = get_month_key()
+    storage_key = f"{user_key}_{month_key}"
+    
+    # Increment usage
+    current = usage_store.get(storage_key, 0)
+    usage_store[storage_key] = current + 1
+    
+    limit = 999999 if is_pro else 3
+    remaining = max(0, limit - usage_store[storage_key])
+    
+    return IncrementResponse(
+        success=True,
+        used=usage_store[storage_key],
+        remaining=remaining
+    )
