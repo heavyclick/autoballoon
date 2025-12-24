@@ -1,7 +1,6 @@
 /**
  * DropZone Component
- * The main file upload and processing interface
- * Handles drag/drop, file processing, and results display
+ * File upload, processing, and results display with balloon editing
  */
 
 import React, { useState, useCallback, useRef } from 'react';
@@ -19,7 +18,6 @@ export function DropZone({ onBeforeProcess }) {
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
 
-  // Handle drag events
   const handleDragEnter = useCallback((e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -37,23 +35,18 @@ export function DropZone({ onBeforeProcess }) {
     e.stopPropagation();
   }, []);
 
-  // Validate file
   const validateFile = (file) => {
     if (!file) return 'No file selected';
-    
     const ext = '.' + file.name.split('.').pop().toLowerCase();
     if (!ALLOWED_EXTENSIONS.includes(ext)) {
       return `Unsupported format. Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`;
     }
-    
     if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
       return `File too large. Maximum size: ${MAX_FILE_SIZE_MB}MB`;
     }
-    
     return null;
   };
 
-  // Process file
   const processFile = async (file) => {
     const validationError = validateFile(file);
     if (validationError) {
@@ -61,7 +54,6 @@ export function DropZone({ onBeforeProcess }) {
       return;
     }
 
-    // Check with parent if we can process (paywall check)
     if (onBeforeProcess && !onBeforeProcess()) {
       return;
     }
@@ -73,8 +65,6 @@ export function DropZone({ onBeforeProcess }) {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      
-      // Add visitor_id for anonymous users
       if (!token) {
         formData.append('visitor_id', visitorId);
       }
@@ -94,11 +84,9 @@ export function DropZone({ onBeforeProcess }) {
 
       if (data.success) {
         setResult(data);
-        // Increment usage after successful processing
         await incrementUsage();
       } else {
         if (data.error?.code === 'USAGE_LIMIT_EXCEEDED') {
-          // Trigger paywall
           if (onBeforeProcess) onBeforeProcess();
         } else {
           setError(data.error?.message || 'Processing failed');
@@ -111,19 +99,16 @@ export function DropZone({ onBeforeProcess }) {
     }
   };
 
-  // Handle drop
   const handleDrop = useCallback((e) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
       processFile(files[0]);
     }
   }, [token, visitorId, onBeforeProcess]);
 
-  // Handle file input change
   const handleFileChange = (e) => {
     const files = e.target.files;
     if (files && files.length > 0) {
@@ -131,18 +116,15 @@ export function DropZone({ onBeforeProcess }) {
     }
   };
 
-  // Handle click to upload
   const handleClick = () => {
     fileInputRef.current?.click();
   };
 
-  // Reset to upload another file
   const handleReset = () => {
     setResult(null);
     setError(null);
   };
 
-  // If we have a result, show the viewer
   if (result) {
     return (
       <BlueprintViewer 
@@ -186,7 +168,6 @@ export function DropZone({ onBeforeProcess }) {
         </div>
       ) : (
         <div className="text-center">
-          {/* Upload icon */}
           <div className={`
             w-20 h-20 rounded-full mx-auto mb-6 flex items-center justify-center
             ${isDragging ? 'bg-[#E63946]/20' : 'bg-[#1a1a1a]'}
@@ -200,7 +181,6 @@ export function DropZone({ onBeforeProcess }) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
           </div>
-
           <p className="text-xl font-medium text-white mb-2">
             {isDragging ? 'Drop your file here' : 'Drag & drop your blueprint'}
           </p>
@@ -222,18 +202,18 @@ export function DropZone({ onBeforeProcess }) {
   );
 }
 
-/**
- * BlueprintViewer Component
- * Displays processed blueprint with balloons overlay
- */
+
 function BlueprintViewer({ result, onReset, token }) {
   const [isExporting, setIsExporting] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [dimensions, setDimensions] = useState(result.dimensions || []);
+  const [isAddingBalloon, setIsAddingBalloon] = useState(false);
+  const [newBalloonValue, setNewBalloonValue] = useState('');
+  const imageRef = useRef(null);
   const containerRef = useRef(null);
   
   const handleExport = async (format = 'xlsx') => {
     setIsExporting(true);
-    
     try {
       const response = await fetch(`${API_BASE_URL}/export`, {
         method: 'POST',
@@ -254,7 +234,6 @@ function BlueprintViewer({ result, onReset, token }) {
       });
 
       if (response.ok) {
-        // Download file
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -272,14 +251,119 @@ function BlueprintViewer({ result, onReset, token }) {
     }
   };
 
-  // Delete a dimension
+  const handleDownloadImage = async () => {
+    setIsDownloading(true);
+    try {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const img = imageRef.current;
+      
+      if (!img) return;
+      
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      ctx.drawImage(img, 0, 0);
+      
+      // Draw balloons with leader lines
+      dimensions.forEach(dim => {
+        const centerX = ((dim.bounding_box.xmin + dim.bounding_box.xmax) / 2 / 1000) * canvas.width;
+        const centerY = ((dim.bounding_box.ymin + dim.bounding_box.ymax) / 2 / 1000) * canvas.height;
+        
+        // Offset balloon (30px right, 25px up)
+        const balloonX = centerX + 30;
+        const balloonY = centerY - 25;
+        const radius = 16;
+        
+        // Leader line
+        ctx.beginPath();
+        ctx.moveTo(centerX, centerY);
+        ctx.lineTo(balloonX, balloonY);
+        ctx.strokeStyle = '#E63946';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        
+        // Small dot at dimension
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, 3, 0, Math.PI * 2);
+        ctx.fillStyle = '#E63946';
+        ctx.fill();
+        
+        // Balloon circle
+        ctx.beginPath();
+        ctx.arc(balloonX, balloonY, radius, 0, Math.PI * 2);
+        ctx.fillStyle = 'white';
+        ctx.fill();
+        ctx.strokeStyle = '#E63946';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        
+        // Balloon number
+        ctx.fillStyle = '#E63946';
+        ctx.font = 'bold 12px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(dim.id.toString(), balloonX, balloonY);
+      });
+      
+      canvas.toBlob((blob) => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${result.metadata?.filename || 'blueprint'}_ballooned.png`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+      }, 'image/png');
+      
+    } catch (err) {
+      console.error('Download failed:', err);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   const handleDeleteDimension = (id) => {
     setDimensions(prev => prev.filter(d => d.id !== id));
   };
 
+  // Add new balloon on click
+  const handleImageClick = (e) => {
+    if (!isAddingBalloon || !newBalloonValue.trim()) return;
+    
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 1000;
+    const y = ((e.clientY - rect.top) / rect.height) * 1000;
+    
+    // Calculate zone based on position
+    const colIndex = Math.floor(x / 125);
+    const rowIndex = Math.floor(y / 250);
+    const columns = ["H", "G", "F", "E", "D", "C", "B", "A"];
+    const rows = ["4", "3", "2", "1"];
+    const zone = `${columns[Math.min(colIndex, 7)]}${rows[Math.min(rowIndex, 3)]}`;
+    
+    const newId = Math.max(...dimensions.map(d => d.id), 0) + 1;
+    
+    const newDimension = {
+      id: newId,
+      value: newBalloonValue.trim(),
+      zone: zone,
+      bounding_box: {
+        xmin: x - 20,
+        xmax: x + 20,
+        ymin: y - 10,
+        ymax: y + 10
+      }
+    };
+    
+    setDimensions(prev => [...prev, newDimension]);
+    setNewBalloonValue('');
+    setIsAddingBalloon(false);
+  };
+
   return (
     <div className="space-y-6">
-      {/* Header with stats */}
+      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <button
@@ -324,8 +408,50 @@ function BlueprintViewer({ result, onReset, token }) {
           )}
         </div>
 
-        {/* Export buttons */}
+        {/* Action buttons */}
         <div className="flex items-center gap-3">
+          {/* Add Balloon */}
+          {isAddingBalloon ? (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newBalloonValue}
+                onChange={(e) => setNewBalloonValue(e.target.value)}
+                placeholder="Enter value..."
+                className="px-3 py-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg text-white text-sm w-32"
+                autoFocus
+              />
+              <span className="text-gray-400 text-xs">Click on image to place</span>
+              <button
+                onClick={() => setIsAddingBalloon(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setIsAddingBalloon(true)}
+              className="px-4 py-2 bg-[#1a1a1a] hover:bg-[#252525] text-gray-300 rounded-lg transition-colors text-sm flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add Balloon
+            </button>
+          )}
+          
+          <button
+            onClick={handleDownloadImage}
+            disabled={isDownloading}
+            className="px-4 py-2 bg-[#1a1a1a] hover:bg-[#252525] text-gray-300 rounded-lg transition-colors text-sm disabled:opacity-50 flex items-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            {isDownloading ? 'Saving...' : 'Download Image'}
+          </button>
+          
           <button
             onClick={() => handleExport('csv')}
             disabled={isExporting}
@@ -333,20 +459,13 @@ function BlueprintViewer({ result, onReset, token }) {
           >
             Export CSV
           </button>
+          
           <button
             onClick={() => handleExport('xlsx')}
             disabled={isExporting}
             className="px-4 py-2 bg-[#E63946] hover:bg-[#c62d39] text-white font-medium rounded-lg transition-colors text-sm disabled:opacity-50 flex items-center gap-2"
           >
-            {isExporting ? (
-              <>
-                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                Exporting...
-              </>
-            ) : (
+            {isExporting ? 'Exporting...' : (
               <>
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -361,26 +480,74 @@ function BlueprintViewer({ result, onReset, token }) {
       {/* Blueprint with balloons */}
       <div 
         ref={containerRef}
-        className="relative bg-[#0a0a0a] rounded-xl overflow-hidden"
+        className={`relative bg-[#0a0a0a] rounded-xl overflow-hidden ${isAddingBalloon ? 'cursor-crosshair' : ''}`}
         style={{ minHeight: '500px' }}
+        onClick={handleImageClick}
       >
-        {/* Image */}
         {result.image && (
           <img 
+            ref={imageRef}
             src={result.image} 
             alt="Blueprint" 
             className="w-full h-auto"
+            crossOrigin="anonymous"
           />
         )}
 
-        {/* Balloon overlays */}
-        {dimensions.map((dim) => (
-          <Balloon 
-            key={dim.id} 
-            dimension={dim} 
-            onDelete={() => handleDeleteDimension(dim.id)}
-          />
-        ))}
+        {/* SVG for leader lines */}
+        <svg className="absolute inset-0 w-full h-full pointer-events-none">
+          {dimensions.map((dim) => {
+            const centerX = (dim.bounding_box.xmin + dim.bounding_box.xmax) / 2 / 10;
+            const centerY = (dim.bounding_box.ymin + dim.bounding_box.ymax) / 2 / 10;
+            const balloonX = centerX + 3;
+            const balloonY = Math.max(2.5, centerY - 2.5);
+            
+            return (
+              <g key={`line-${dim.id}`}>
+                <line
+                  x1={`${centerX}%`}
+                  y1={`${centerY}%`}
+                  x2={`${balloonX}%`}
+                  y2={`${balloonY}%`}
+                  stroke="#E63946"
+                  strokeWidth="2"
+                />
+                <circle
+                  cx={`${centerX}%`}
+                  cy={`${centerY}%`}
+                  r="4"
+                  fill="#E63946"
+                />
+              </g>
+            );
+          })}
+        </svg>
+
+        {/* Balloon markers */}
+        {dimensions.map((dim) => {
+          const centerX = (dim.bounding_box.xmin + dim.bounding_box.xmax) / 2 / 10;
+          const centerY = (dim.bounding_box.ymin + dim.bounding_box.ymax) / 2 / 10;
+          const balloonX = centerX + 3;
+          const balloonY = Math.max(2.5, centerY - 2.5);
+          
+          return (
+            <Balloon 
+              key={dim.id} 
+              dimension={dim}
+              left={balloonX}
+              top={balloonY}
+              onDelete={() => handleDeleteDimension(dim.id)}
+            />
+          );
+        })}
+        
+        {isAddingBalloon && (
+          <div className="absolute inset-0 bg-black/20 flex items-center justify-center pointer-events-none">
+            <span className="bg-[#E63946] text-white px-4 py-2 rounded-lg">
+              Click anywhere to place balloon
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Dimensions table */}
@@ -399,7 +566,7 @@ function BlueprintViewer({ result, onReset, token }) {
               </tr>
             </thead>
             <tbody>
-              {dimensions.map((dim, idx) => (
+              {dimensions.map((dim) => (
                 <tr key={dim.id} className="border-b border-[#1a1a1a] hover:bg-[#161616]">
                   <td className="px-4 py-2 text-white">{dim.id}</td>
                   <td className="px-4 py-2 text-gray-300">{dim.zone || '—'}</td>
@@ -421,7 +588,7 @@ function BlueprintViewer({ result, onReset, token }) {
           
           {dimensions.length === 0 && (
             <div className="px-4 py-8 text-center text-gray-500">
-              No dimensions detected. Try uploading a different drawing.
+              No dimensions detected. Click "Add Balloon" to add manually.
             </div>
           )}
         </div>
@@ -430,32 +597,20 @@ function BlueprintViewer({ result, onReset, token }) {
   );
 }
 
-/**
- * Balloon Component
- * Individual balloon marker on the blueprint
- */
-function Balloon({ dimension, onDelete }) {
+
+function Balloon({ dimension, left, top, onDelete }) {
   const [isHovered, setIsHovered] = useState(false);
-  
-  // Calculate position from bounding box (normalized 0-1000)
-  const centerX = (dimension.bounding_box.xmin + dimension.bounding_box.xmax) / 2;
-  const centerY = (dimension.bounding_box.ymin + dimension.bounding_box.ymax) / 2;
-  
-  // Convert to percentage
-  const left = (centerX / 1000) * 100;
-  const top = (centerY / 1000) * 100;
 
   return (
     <div
-      className="absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer group"
+      className="absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer"
       style={{ left: `${left}%`, top: `${top}%` }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* Balloon circle */}
       <div className={`
         w-8 h-8 rounded-full flex items-center justify-center
-        font-bold text-sm transition-all duration-200
+        font-bold text-sm transition-all duration-200 shadow-lg
         ${isHovered 
           ? 'bg-[#E63946] text-white scale-110' 
           : 'bg-white text-[#E63946] border-2 border-[#E63946]'
@@ -464,7 +619,6 @@ function Balloon({ dimension, onDelete }) {
         {dimension.id}
       </div>
 
-      {/* Tooltip on hover */}
       {isHovered && (
         <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-[#161616] border border-[#2a2a2a] rounded-lg px-3 py-2 whitespace-nowrap z-10 shadow-xl">
           <div className="text-white font-mono text-sm">{dimension.value}</div>
@@ -485,3 +639,7 @@ function Balloon({ dimension, onDelete }) {
     </div>
   );
 }
+LEMONSQUEEZY_API_KEY=your_api_key
+LEMONSQUEEZY_STORE_ID=your_store_id
+LEMONSQUEEZY_VARIANT_ID=your_variant_id
+LEMONSQUEEZY_WEBHOOK_SECRET=your_webhook_secret
