@@ -1,6 +1,5 @@
 """
-Usage Tracking Routes
-Handles free tier usage limits using Supabase
+Usage Tracking Routes - Fixed for unique constraint
 """
 from fastapi import APIRouter, Header, Query
 from typing import Optional
@@ -41,11 +40,13 @@ async def check_usage(
     
     if supabase:
         try:
-            result = supabase.table("usage").select("*").eq(
+            # Get the count from the usage record
+            result = supabase.table("usage").select("count").eq(
                 "visitor_id", identifier
             ).eq("month_year", month_year).execute()
             
-            count = len(result.data) if result.data else 0
+            if result.data and len(result.data) > 0:
+                count = result.data[0].get("count", 0) or 0
         except Exception as e:
             print(f"Supabase check error: {e}")
     
@@ -78,20 +79,35 @@ async def increment_usage(
     
     if supabase:
         try:
-            # Insert with all required columns
-            supabase.table("usage").insert({
-                "visitor_id": identifier,
-                "month_year": month_year,
-                "action": "process",
-                "count": 1
-            }).execute()
-            
-            # Get updated count
-            result = supabase.table("usage").select("*").eq(
+            # First, check if record exists
+            existing = supabase.table("usage").select("id, count").eq(
                 "visitor_id", identifier
             ).eq("month_year", month_year).execute()
             
-            count = len(result.data) if result.data else 1
+            if existing.data and len(existing.data) > 0:
+                # Update existing record
+                current_count = existing.data[0].get("count", 0) or 0
+                new_count = current_count + 1
+                record_id = existing.data[0]["id"]
+                
+                supabase.table("usage").update({
+                    "count": new_count,
+                    "updated_at": datetime.now().isoformat()
+                }).eq("id", record_id).execute()
+                
+                count = new_count
+            else:
+                # Insert new record
+                supabase.table("usage").insert({
+                    "visitor_id": identifier,
+                    "month_year": month_year,
+                    "count": 1,
+                    "action": "process",
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat()
+                }).execute()
+                count = 1
+                
         except Exception as e:
             print(f"Supabase increment error: {e}")
     
