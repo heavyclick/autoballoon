@@ -1,21 +1,26 @@
 """
 Detection Service
-Orchestrates dimension detection using Gemini Vision with direct bounding boxes.
+Orchestrates OCR + Gemini Vision fusion for accurate dimension detection.
 
-MAJOR ARCHITECTURE CHANGE:
-- OLD: Gemini returns values -> Match against OCR for locations (UNRELIABLE)
-- NEW: Gemini returns values WITH locations directly (ACCURATE)
+Strategy:
+1. OCR provides ALL text with precise bounding boxes
+2. Gemini identifies which text values are dimensions (semantic filtering)
+3. This service matches Gemini's dimension list against OCR results
+4. Output: Only dimensions, with precise bounding boxes from OCR
 
-FIX: Convert float coordinates to integers for BoundingBox model
-FIX: Don't fail all dimensions if one has a bad bounding box
+FIXED: Matches core numeric values to handle modifiers like (2x), C/C, REF
+- Gemini returns: "35 C/C" 
+- OCR detects: "35" (separate from "C/C")
+- We match on "35", but return "35 C/C" with OCR's bounding box for "35"
 """
 import re
 from typing import Optional
+from difflib import SequenceMatcher
 
 from services.ocr_service import OCRService, OCRDetection, create_ocr_service
 from services.vision_service import VisionService, create_vision_service
 from models import Dimension, BoundingBox, ErrorCode
-from config import HIGH_CONFIDENCE_THRESHOLD, MEDIUM_CONFIDENCE_THRESHOLD, NORMALIZED_COORD_SYSTEM
+from config import HIGH_CONFIDENCE_THRESHOLD, MEDIUM_CONFIDENCE_THRESHOLD
 
 
 class DetectionServiceError(Exception):
@@ -28,8 +33,7 @@ class DetectionServiceError(Exception):
 
 class DetectionService:
     """
-    Uses Gemini Vision to detect dimensions WITH their locations directly.
-    Falls back to OCR matching only if Gemini doesn't provide locations.
+    Fuses OCR and Gemini Vision results for accurate dimension detection.
     """
     
     def __init__(
@@ -47,7 +51,7 @@ class DetectionService:
         image_height: int
     ) -> list[Dimension]:
         """
-        Detect dimensions using Gemini Vision with direct bounding boxes.
+        Detect dimensions using hybrid OCR + Gemini approach.
         
         Args:
             image_bytes: PNG image data
@@ -57,136 +61,60 @@ class DetectionService:
         Returns:
             List of Dimension objects sorted in reading order
         """
+        # Step 1: Run OCR to get all text with precise bounding boxes
+        ocr_detections = await self._run_ocr(image_bytes, image_width, image_height)
+        
+        # Step 2: Run Gemini to identify which values are dimensions
+        dimension_values = await self._run_gemini(image_bytes)
+        
+        # Step 3: Match Gemini's dimensions against OCR results
+        matched_dimensions = self._match_dimensions(ocr_detections, dimension_values)
+        
+        # Step 4: Sort in reading order and assign IDs
+        sorted_dimensions = self._sort_reading_order(matched_dimensions)
+        
+        # Step 5: Assign sequential IDs
+        final_dimensions = []
+        for idx, dim in enumerate(sorted_dimensions, start=1):
+            dim.id = idx
+            final_dimensions.append(dim)
+        
+        return final_dimensions
+    
+    async def _run_ocr(
+        self, 
+        image_bytes: bytes, 
+        image_width: int, 
+        image_height: int
+    ) -> list[OCRDetection]:
+        """Run OCR and group adjacent text"""
+        if not self.ocr_service:
+            return []
+        
+        try:
+            detections = await self.ocr_service.detect_text(
+                image_bytes, image_width, image_height
+            )
+            # Group adjacent text (e.g., "12" "." "50" → "12.50")
+            grouped = self.ocr_service.group_adjacent_text(detections)
+            return grouped
+        except Exception as e:
+            # Log error but continue with Gemini-only fallback
+            print(f"OCR error (continuing with Gemini): {e}")
+            return []
+    
+    async def _run_gemini(self, image_bytes: bytes) -> list[str]:
+        """Run Gemini to identify dimension values"""
         if not self.vision_service:
             return []
         
-        dimensions = []
-        used_gemini_locations = False
-        
         try:
-            # Get dimensions WITH locations directly from Gemini
-            dimensions_with_locations = await self.vision_service.identify_dimensions_with_locations(image_bytes)
-            
-            if dimensions_with_locations:
-                # Convert Gemini's normalized coords (0-1) to our system (0-1000)
-                dimensions = self._convert_gemini_dimensions(dimensions_with_locations)
-                
-                if dimensions:
-                    used_gemini_locations = True
-                    print(f"✓ Gemini detected {len(dimensions)} dimensions with locations")
-                else:
-                    print("⚠ Gemini returned dimensions but all failed to parse, falling back to OCR")
-            
+            dimensions = await self.vision_service.identify_dimensions(image_bytes)
+            return dimensions
         except Exception as e:
-            print(f"⚠ Gemini with locations failed: {e}")
-        
-        # Fallback to OCR matching if Gemini locations didn't work
-        if not used_gemini_locations:
-            print("→ Using OCR fallback matching...")
-            dimensions = await self._fallback_ocr_matching(image_bytes, image_width, image_height)
-        
-        # Sort in reading order and assign IDs
-        sorted_dimensions = self._sort_reading_order(dimensions)
-        
-        for idx, dim in enumerate(sorted_dimensions, start=1):
-            dim.id = idx
-        
-        print(f"✓ Final result: {len(sorted_dimensions)} dimensions")
-        return sorted_dimensions
-    
-    def _convert_gemini_dimensions(self, gemini_results: list[dict]) -> list[Dimension]:
-        """
-        Convert Gemini's dimension results to our Dimension model.
-        
-        Gemini returns bbox as 0-1 normalized coordinates.
-        We convert to our 0-1000 normalized system as INTEGERS.
-        
-        IMPORTANT: Process each dimension independently so one bad bbox
-        doesn't cause us to lose all dimensions.
-        """
-        dimensions = []
-        
-        for item in gemini_results:
-            value = item.get("value", "")
-            bbox = item.get("bbox", {})
-            
-            if not value:
-                continue
-            
-            try:
-                # Convert from 0-1 to 0-1000 scale AND cast to int
-                # The int() cast is critical - BoundingBox expects integers!
-                xmin = int(bbox.get("xmin", 0) * NORMALIZED_COORD_SYSTEM)
-                ymin = int(bbox.get("ymin", 0) * NORMALIZED_COORD_SYSTEM)
-                xmax = int(bbox.get("xmax", 0) * NORMALIZED_COORD_SYSTEM)
-                ymax = int(bbox.get("ymax", 0) * NORMALIZED_COORD_SYSTEM)
-                
-                # Clamp to valid range
-                xmin = max(0, min(NORMALIZED_COORD_SYSTEM, xmin))
-                ymin = max(0, min(NORMALIZED_COORD_SYSTEM, ymin))
-                xmax = max(0, min(NORMALIZED_COORD_SYSTEM, xmax))
-                ymax = max(0, min(NORMALIZED_COORD_SYSTEM, ymax))
-                
-                # Ensure max > min (at least 1 unit difference)
-                if xmax <= xmin:
-                    xmax = min(xmin + 50, NORMALIZED_COORD_SYSTEM)
-                if ymax <= ymin:
-                    ymax = min(ymin + 30, NORMALIZED_COORD_SYSTEM)
-                
-                dimensions.append(Dimension(
-                    id=0,  # Will be assigned later
-                    value=value,
-                    zone=None,  # Will be assigned by grid service
-                    bounding_box=BoundingBox(
-                        xmin=xmin,
-                        ymin=ymin,
-                        xmax=xmax,
-                        ymax=ymax
-                    ),
-                    confidence=0.9  # High confidence since Gemini provided location directly
-                ))
-                print(f"  ✓ Parsed: {value} at ({xmin}, {ymin}) - ({xmax}, {ymax})")
-                
-            except Exception as e:
-                # Log but continue - don't let one bad dimension break everything
-                print(f"  ✗ Failed to parse dimension '{value}': {e}")
-                continue
-        
-        return dimensions
-    
-    async def _fallback_ocr_matching(
-        self,
-        image_bytes: bytes,
-        image_width: int,
-        image_height: int
-    ) -> list[Dimension]:
-        """
-        Fallback method: Use OCR + Gemini matching (old approach).
-        Only used if Gemini doesn't return locations.
-        """
-        # Run OCR
-        ocr_detections = []
-        if self.ocr_service:
-            try:
-                detections = await self.ocr_service.detect_text(
-                    image_bytes, image_width, image_height
-                )
-                ocr_detections = self.ocr_service.group_adjacent_text(detections)
-                print(f"  OCR found {len(ocr_detections)} text regions")
-            except Exception as e:
-                print(f"  OCR error: {e}")
-        
-        # Get dimension values from Gemini (without locations)
-        dimension_values = []
-        if self.vision_service:
-            try:
-                dimension_values = await self.vision_service.identify_dimensions(image_bytes)
-                print(f"  Gemini identified {len(dimension_values)} dimension values")
-            except Exception as e:
-                print(f"  Gemini error: {e}")
-        
-        # Match them
-        return self._match_dimensions(ocr_detections, dimension_values)
+            # Log error but continue
+            print(f"Gemini error: {e}")
+            return []
     
     def _match_dimensions(
         self, 
@@ -194,8 +122,10 @@ class DetectionService:
         gemini_dimensions: list[str]
     ) -> list[Dimension]:
         """
-        Match Gemini's dimension values against OCR detections.
-        Uses improved matching with primary number extraction.
+        Match Gemini's dimension list against OCR detections.
+        
+        For each dimension Gemini identified, find the best matching
+        OCR detection to get precise bounding box.
         """
         matched = []
         used_ocr_indices = set()
@@ -211,26 +141,48 @@ class DetectionService:
                 ocr_detection, match_confidence = best_match
                 used_ocr_indices.add(id(ocr_detection))
                 
+                # Combine confidences: Gemini says it's a dimension, OCR provides location
+                # Use OCR confidence adjusted by match quality
                 combined_confidence = ocr_detection.confidence * match_confidence
                 
                 matched.append(Dimension(
-                    id=0,
-                    value=dim_value,
-                    zone=None,
+                    id=0,  # Will be assigned later
+                    value=dim_value,  # Use Gemini's value (includes modifiers like C/C, 2x)
+                    zone=None,  # Will be assigned by grid service
                     bounding_box=BoundingBox(**ocr_detection.bounding_box),
                     confidence=combined_confidence
                 ))
-                print(f"  ✓ Matched: {dim_value}")
             else:
-                print(f"  ✗ No OCR match for dimension: {dim_value}")
+                # Gemini found a dimension but OCR didn't detect it
+                # This could happen with very small text or unusual fonts
+                # Skip it rather than guess position
+                print(f"No OCR match for dimension: {dim_value}")
         
         return matched
     
-    def _extract_primary_number(self, text: str) -> Optional[str]:
-        """Extract the primary numeric value from a dimension string."""
-        cleaned = text.replace('Ø', '').replace('⌀', '').replace('R', '').replace('M', '')
-        cleaned = cleaned.replace('°', '').replace('±', ' ').replace('×', ' ').replace('x', ' ')
+    def _extract_core_number(self, text: str) -> Optional[str]:
+        """
+        Extract the core numeric value from a dimension string.
+        This is the primary number we'll use for matching against OCR.
         
+        Examples:
+            "35 C/C" -> "35"
+            "Ø3.4 (2x)" -> "3.4"
+            "Ø7.5 (2x)" -> "7.5"
+            "0.95 REF" -> "0.95"
+            "89.5°" -> "89.5"
+            "M8×1.25" -> "8"
+            "R5 TYP" -> "5"
+            "2×.5 (2x)" -> "2"
+        """
+        # Remove common prefixes
+        cleaned = text
+        cleaned = re.sub(r'^[ØøΦφ⌀]', '', cleaned)  # Diameter symbols
+        cleaned = re.sub(r'^R', '', cleaned)  # Radius
+        cleaned = re.sub(r'^M', '', cleaned)  # Metric thread
+        cleaned = re.sub(r'^C', '', cleaned)  # Chamfer
+        
+        # Find all numbers (including decimals)
         numbers = re.findall(r'\d+\.?\d*', cleaned)
         
         if numbers:
@@ -243,25 +195,24 @@ class DetectionService:
         ocr_detections: list[OCRDetection],
         used_indices: set
     ) -> Optional[tuple[OCRDetection, float]]:
-        """Find the best OCR match for a dimension value."""
-        dim_primary_number = self._extract_primary_number(dimension_value)
+        """
+        Find the OCR detection that best matches the dimension value.
+        
+        STRATEGY:
+        1. Extract core number from Gemini's dimension (e.g., "35 C/C" -> "35")
+        2. Find OCR detection containing that core number
+        3. Return OCR's bounding box, but we'll use Gemini's full value
+        
+        Returns tuple of (OCRDetection, match_confidence) or None.
+        """
+        # Extract core number for matching
+        core_number = self._extract_core_number(dimension_value)
         normalized_dim = self._normalize_for_matching(dimension_value)
         
         best_match = None
         best_score = 0.0
         
-        # Pass 1: Exact primary number match
-        if dim_primary_number:
-            for ocr in ocr_detections:
-                if id(ocr) in used_indices:
-                    continue
-                
-                ocr_primary_number = self._extract_primary_number(ocr.text)
-                
-                if ocr_primary_number and ocr_primary_number == dim_primary_number:
-                    return (ocr, 0.95)
-        
-        # Pass 2: Exact normalized match
+        # === PASS 1: Exact full match (ideal case) ===
         for ocr in ocr_detections:
             if id(ocr) in used_indices:
                 continue
@@ -271,57 +222,102 @@ class DetectionService:
             if normalized_dim == normalized_ocr:
                 return (ocr, 1.0)
         
-        # Pass 3: Containment with primary number validation
+        # === PASS 2: Core number exact match ===
+        # This handles cases like Gemini="35 C/C", OCR="35"
+        if core_number:
+            for ocr in ocr_detections:
+                if id(ocr) in used_indices:
+                    continue
+                
+                ocr_core = self._extract_core_number(ocr.text)
+                
+                # Exact core number match
+                if ocr_core and ocr_core == core_number:
+                    # Verify OCR text looks like a dimension (has the number prominently)
+                    # Avoid matching "A3" when looking for "3"
+                    normalized_ocr = self._normalize_for_matching(ocr.text)
+                    if core_number in normalized_ocr:
+                        return (ocr, 0.95)
+        
+        # === PASS 3: Containment match ===
         for ocr in ocr_detections:
             if id(ocr) in used_indices:
                 continue
             
             normalized_ocr = self._normalize_for_matching(ocr.text)
-            ocr_primary_number = self._extract_primary_number(ocr.text)
             
+            # Check if one contains the other
             if normalized_dim in normalized_ocr or normalized_ocr in normalized_dim:
-                if dim_primary_number and ocr_primary_number:
-                    if dim_primary_number == ocr_primary_number:
-                        score = min(len(normalized_dim), len(normalized_ocr)) / max(len(normalized_dim), len(normalized_ocr))
-                        if score > best_score:
-                            best_score = score
-                            best_match = ocr
+                score = min(len(normalized_dim), len(normalized_ocr)) / max(len(normalized_dim), len(normalized_ocr))
+                if score > best_score:
+                    best_score = score
+                    best_match = ocr
+        
+        # === PASS 4: Fuzzy match (last resort) ===
+        if not best_match or best_score < 0.7:
+            for ocr in ocr_detections:
+                if id(ocr) in used_indices:
+                    continue
+                
+                normalized_ocr = self._normalize_for_matching(ocr.text)
+                
+                score = self._fuzzy_match_score(normalized_dim, normalized_ocr)
+                if score > best_score and score > 0.7:
+                    best_score = score
+                    best_match = ocr
         
         if best_match:
             return (best_match, best_score)
         return None
     
     def _normalize_for_matching(self, text: str) -> str:
-        """Normalize text for matching."""
+        """
+        Normalize text for matching.
+        Remove common variations that shouldn't affect matching.
+        """
+        # Convert to lowercase
         normalized = text.lower()
         
+        # Normalize common symbol variations
         replacements = {
-            "ø": "o",
+            "ø": "o",  # Diameter symbol
             "⌀": "o",
-            "°": "",
+            "°": "",   # Degree symbol
             "±": "+-",
-            " ": "",
-            ",": ".",
+            " ": "",   # Remove spaces
+            ",": ".",  # Decimal separator
         }
         
         for old, new in replacements.items():
             normalized = normalized.replace(old, new)
         
+        # Keep only alphanumeric and basic punctuation
         normalized = re.sub(r'[^\w.\-+/]', '', normalized)
         
         return normalized
     
+    def _fuzzy_match_score(self, s1: str, s2: str) -> float:
+        """Calculate fuzzy match score between two strings"""
+        return SequenceMatcher(None, s1, s2).ratio()
+    
     def _sort_reading_order(self, dimensions: list[Dimension]) -> list[Dimension]:
-        """Sort dimensions in reading order (top-to-bottom, left-to-right)."""
+        """
+        Sort dimensions in reading order (top-to-bottom, left-to-right).
+        
+        Divides image into horizontal bands, then sorts within each band.
+        """
         if not dimensions:
             return []
         
+        # Define band height (10% of normalized coordinate system)
         band_height = 100  # 10% of 1000
         
+        # Group dimensions into bands based on Y position
         def get_band(dim: Dimension) -> int:
             center_y = dim.bounding_box.center_y
             return center_y // band_height
         
+        # Sort by band (Y), then by X position within band
         return sorted(
             dimensions,
             key=lambda d: (get_band(d), d.bounding_box.center_x)
@@ -332,7 +328,9 @@ def create_detection_service(
     ocr_api_key: Optional[str] = None,
     gemini_api_key: Optional[str] = None
 ) -> DetectionService:
-    """Factory function to create detection service."""
+    """
+    Factory function to create detection service with configured API services.
+    """
     ocr_service = None
     vision_service = None
     
