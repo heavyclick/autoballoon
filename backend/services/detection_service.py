@@ -6,8 +6,8 @@ MAJOR ARCHITECTURE CHANGE:
 - OLD: Gemini returns values -> Match against OCR for locations (UNRELIABLE)
 - NEW: Gemini returns values WITH locations directly (ACCURATE)
 
-This eliminates the misplacement problem where the same number appears multiple
-times on a drawing (e.g., "7.5" in both the dimension and notes section).
+FIX: Convert float coordinates to integers for BoundingBox model
+FIX: Don't fail all dimensions if one has a bad bounding box
 """
 import re
 from typing import Optional
@@ -60,6 +60,9 @@ class DetectionService:
         if not self.vision_service:
             return []
         
+        dimensions = []
+        used_gemini_locations = False
+        
         try:
             # Get dimensions WITH locations directly from Gemini
             dimensions_with_locations = await self.vision_service.identify_dimensions_with_locations(image_bytes)
@@ -67,12 +70,19 @@ class DetectionService:
             if dimensions_with_locations:
                 # Convert Gemini's normalized coords (0-1) to our system (0-1000)
                 dimensions = self._convert_gemini_dimensions(dimensions_with_locations)
-            else:
-                # Fallback: use old OCR matching method
-                dimensions = await self._fallback_ocr_matching(image_bytes, image_width, image_height)
+                
+                if dimensions:
+                    used_gemini_locations = True
+                    print(f"✓ Gemini detected {len(dimensions)} dimensions with locations")
+                else:
+                    print("⚠ Gemini returned dimensions but all failed to parse, falling back to OCR")
             
         except Exception as e:
-            print(f"Gemini with locations failed, falling back to OCR: {e}")
+            print(f"⚠ Gemini with locations failed: {e}")
+        
+        # Fallback to OCR matching if Gemini locations didn't work
+        if not used_gemini_locations:
+            print("→ Using OCR fallback matching...")
             dimensions = await self._fallback_ocr_matching(image_bytes, image_width, image_height)
         
         # Sort in reading order and assign IDs
@@ -81,6 +91,7 @@ class DetectionService:
         for idx, dim in enumerate(sorted_dimensions, start=1):
             dim.id = idx
         
+        print(f"✓ Final result: {len(sorted_dimensions)} dimensions")
         return sorted_dimensions
     
     def _convert_gemini_dimensions(self, gemini_results: list[dict]) -> list[Dimension]:
@@ -88,7 +99,10 @@ class DetectionService:
         Convert Gemini's dimension results to our Dimension model.
         
         Gemini returns bbox as 0-1 normalized coordinates.
-        We convert to our 0-1000 normalized system.
+        We convert to our 0-1000 normalized system as INTEGERS.
+        
+        IMPORTANT: Process each dimension independently so one bad bbox
+        doesn't cause us to lose all dimensions.
         """
         dimensions = []
         
@@ -96,27 +110,47 @@ class DetectionService:
             value = item.get("value", "")
             bbox = item.get("bbox", {})
             
-            if not value or not bbox:
+            if not value:
                 continue
             
-            # Convert from 0-1 to 0-1000 scale
-            xmin = bbox.get("xmin", 0) * NORMALIZED_COORD_SYSTEM
-            ymin = bbox.get("ymin", 0) * NORMALIZED_COORD_SYSTEM
-            xmax = bbox.get("xmax", 0) * NORMALIZED_COORD_SYSTEM
-            ymax = bbox.get("ymax", 0) * NORMALIZED_COORD_SYSTEM
-            
-            dimensions.append(Dimension(
-                id=0,  # Will be assigned later
-                value=value,
-                zone=None,  # Will be assigned by grid service
-                bounding_box=BoundingBox(
-                    xmin=xmin,
-                    ymin=ymin,
-                    xmax=xmax,
-                    ymax=ymax
-                ),
-                confidence=0.9  # High confidence since Gemini provided location directly
-            ))
+            try:
+                # Convert from 0-1 to 0-1000 scale AND cast to int
+                # The int() cast is critical - BoundingBox expects integers!
+                xmin = int(bbox.get("xmin", 0) * NORMALIZED_COORD_SYSTEM)
+                ymin = int(bbox.get("ymin", 0) * NORMALIZED_COORD_SYSTEM)
+                xmax = int(bbox.get("xmax", 0) * NORMALIZED_COORD_SYSTEM)
+                ymax = int(bbox.get("ymax", 0) * NORMALIZED_COORD_SYSTEM)
+                
+                # Clamp to valid range
+                xmin = max(0, min(NORMALIZED_COORD_SYSTEM, xmin))
+                ymin = max(0, min(NORMALIZED_COORD_SYSTEM, ymin))
+                xmax = max(0, min(NORMALIZED_COORD_SYSTEM, xmax))
+                ymax = max(0, min(NORMALIZED_COORD_SYSTEM, ymax))
+                
+                # Ensure max > min (at least 1 unit difference)
+                if xmax <= xmin:
+                    xmax = min(xmin + 50, NORMALIZED_COORD_SYSTEM)
+                if ymax <= ymin:
+                    ymax = min(ymin + 30, NORMALIZED_COORD_SYSTEM)
+                
+                dimensions.append(Dimension(
+                    id=0,  # Will be assigned later
+                    value=value,
+                    zone=None,  # Will be assigned by grid service
+                    bounding_box=BoundingBox(
+                        xmin=xmin,
+                        ymin=ymin,
+                        xmax=xmax,
+                        ymax=ymax
+                    ),
+                    confidence=0.9  # High confidence since Gemini provided location directly
+                ))
+                print(f"  ✓ Parsed: {value} at ({xmin}, {ymin}) - ({xmax}, {ymax})")
+                
+            except Exception as e:
+                # Log but continue - don't let one bad dimension break everything
+                print(f"  ✗ Failed to parse dimension '{value}': {e}")
+                continue
         
         return dimensions
     
@@ -138,16 +172,18 @@ class DetectionService:
                     image_bytes, image_width, image_height
                 )
                 ocr_detections = self.ocr_service.group_adjacent_text(detections)
+                print(f"  OCR found {len(ocr_detections)} text regions")
             except Exception as e:
-                print(f"OCR error: {e}")
+                print(f"  OCR error: {e}")
         
         # Get dimension values from Gemini (without locations)
         dimension_values = []
         if self.vision_service:
             try:
                 dimension_values = await self.vision_service.identify_dimensions(image_bytes)
+                print(f"  Gemini identified {len(dimension_values)} dimension values")
             except Exception as e:
-                print(f"Gemini error: {e}")
+                print(f"  Gemini error: {e}")
         
         # Match them
         return self._match_dimensions(ocr_detections, dimension_values)
@@ -184,8 +220,9 @@ class DetectionService:
                     bounding_box=BoundingBox(**ocr_detection.bounding_box),
                     confidence=combined_confidence
                 ))
+                print(f"  ✓ Matched: {dim_value}")
             else:
-                print(f"No OCR match for dimension: {dim_value}")
+                print(f"  ✗ No OCR match for dimension: {dim_value}")
         
         return matched
     
