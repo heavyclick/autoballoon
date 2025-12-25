@@ -2,6 +2,9 @@
 Vision Service
 Integrates with Gemini Vision API for semantic understanding of manufacturing drawings.
 Used to identify which text elements are dimensions vs. labels, notes, part numbers, etc.
+
+ENHANCED: Prompt updated to capture ALL dimension modifiers for AS9102/ISO 13485 compliance
+while keeping the rest of the code exactly the same.
 """
 import base64
 import json
@@ -95,41 +98,117 @@ class VisionService:
         return self._parse_dimension_response(result)
     
     def _build_dimension_identification_prompt(self) -> str:
-        """Build the prompt for dimension identification"""
-        return """You are analyzing a manufacturing/engineering drawing. Your task is to identify ALL numeric dimensions shown on the drawing.
+        """
+        Build the prompt for dimension identification.
+        
+        ENHANCED for AS9102 First Article Inspection and ISO 13485 Medical Device compliance.
+        Captures ALL dimension modifiers that are critical for inspection documentation.
+        """
+        return """You are an expert manufacturing engineer with 20+ years of experience reading technical drawings for AS9102 First Article Inspection (aerospace) and ISO 13485 (medical device) documentation.
 
-WHAT TO EXTRACT (dimensions):
-- Linear dimensions (e.g., "12.50", "25.4", "100")
-- Diameters (e.g., "Ø25", "⌀12.5", "DIA 10")
-- Radii (e.g., "R5", "R2.5")
-- Angles (e.g., "45°", "90°")
-- Tolerances (e.g., "12.50 ±0.05", "25.0 +0.1/-0.05")
-- Thread callouts (e.g., "M8x1.25", "1/4-20")
-- Depth callouts (e.g., "↧10", "DEPTH 5")
-- Chamfers (e.g., "C1", "45° x 2")
+Your task is to extract ALL dimensions from this drawing with their COMPLETE values INCLUDING all modifiers.
 
-WHAT TO IGNORE (not dimensions):
-- Part numbers (e.g., "PN-12345", "PART NO.")
-- Revision letters (e.g., "REV A", "REV B")  
+## CRITICAL: Always include these modifiers as part of the dimension value
+
+### QUANTITY/FEATURE COUNT (critical for inspection - indicates how many features to measure):
+- "(2x)", "(3x)", "(4x)", "(6x)", "(8x)" - e.g., "Ø3.4 (2x)" NOT "Ø3.4"
+- "2 PL", "3 PL", "4 PLACES", "6 HOLES" - e.g., "R2 4 PL" NOT "R2"
+- "TYP", "TYPICAL" - e.g., "R5 TYP" NOT "R5"
+- "EQ SP", "EQUALLY SPACED" - e.g., "30° EQ SP" NOT "30°"
+
+### SPACING/PATTERN NOTATIONS:
+- "C/C", "C-C", "CTR-CTR" (Center-to-Center) - e.g., "35 C/C" NOT "35"
+- "B.C.", "BC", "PCD" (Bolt Circle Diameter) - e.g., "Ø44 B.C." NOT "Ø44"
+- "SQ" (Square pattern) - e.g., "10 SQ" NOT "10"
+
+### REFERENCE/DATUM MARKERS (critical for GD&T):
+- "REF", "REFERENCE" - e.g., "0.95 REF" NOT "0.95"
+- "NOM", "NOMINAL" - e.g., "25 NOM" NOT "25"
+- "BSC", "BASIC" - e.g., "45° BSC" NOT "45°"
+- "TRUE" - e.g., "R10 TRUE" NOT "R10"
+
+### LIMIT DIMENSIONS:
+- "MAX", "MAXIMUM" - e.g., "15 MAX" NOT "15"
+- "MIN", "MINIMUM" - e.g., "3 MIN" NOT "3"
+
+### DEPTH/COUNTERBORE/COUNTERSINK:
+- "DEEP", "DP", "↧" - e.g., "Ø5 ↧10" NOT "Ø5"
+- "CBORE", "C'BORE", "⌴" - e.g., "Ø10 CBORE Ø15" 
+- "CSINK", "C'SINK", "⌵" - e.g., "Ø3 CSINK 90°"
+- "THRU", "THROUGH" - e.g., "Ø6 THRU" NOT "Ø6"
+
+### THREAD SPECIFICATIONS:
+- Full thread callouts - e.g., "M8×1.25 (4x)" NOT "M8"
+- "TAP", "TAPPED" - e.g., "M6 TAP ↧15"
+- Class/fit - e.g., "1/4-20 UNC-2B"
+
+### SURFACE/FINISH:
+- "BOTH SIDES", "2 SURFACES" - e.g., "0.8 BOTH SIDES"
+- "FAR SIDE", "NEAR SIDE"
+
+## EXAMPLES - CORRECT vs WRONG:
+
+✓ CORRECT: "35 C/C"           ✗ WRONG: "35"
+✓ CORRECT: "Ø3.4 (2x)"        ✗ WRONG: "Ø3.4"  
+✓ CORRECT: "Ø7.5 (2x)"        ✗ WRONG: "Ø7.5"
+✓ CORRECT: "0.95 REF"         ✗ WRONG: "0.95"
+✓ CORRECT: "89.5°"            ✗ WRONG: "89.5"
+✓ CORRECT: "R5 TYP"           ✗ WRONG: "R5"
+✓ CORRECT: "M8×1.25 (4x)"     ✗ WRONG: "M8×1.25" or "M8"
+✓ CORRECT: "Ø44 B.C."         ✗ WRONG: "Ø44"
+✓ CORRECT: "15.3 +0.1/-0"     ✗ WRONG: "15.3"
+✓ CORRECT: "25 MAX"           ✗ WRONG: "25"
+✓ CORRECT: "Ø6 THRU"          ✗ WRONG: "Ø6"
+✓ CORRECT: "2×.5 (2x)"        ✗ WRONG: "2×.5"
+✓ CORRECT: "10 ±0.5 (4x)"     ✗ WRONG: "10 ±0.5"
+
+## WHAT TO EXTRACT:
+- Linear dimensions with ALL modifiers
+- Diameters (Ø, ⌀) with quantity and depth callouts
+- Radii (R) with TYP or quantity markers
+- Angles (°) with BSC or quantity markers
+- Tolerances (±, +/-)
+- Thread callouts with quantity
+- Chamfers (C, ×45°)
+- All reference and limit dimensions
+
+## WHAT TO IGNORE (not dimensions):
+- Part numbers (e.g., "PN-12345", "F15848")
+- Revision letters (e.g., "REV A", "REV B")
 - Drawing numbers
-- Scale indicators (e.g., "SCALE 2:1")
-- Company names
-- Title block text
-- Notes and annotations that are not measurements
-- Zone/grid references (e.g., "A1", "B3", "ZONE C")
-- Material specifications
-- Surface finish symbols without dimensions
+- Scale indicators (e.g., "SCALE 2:1", "2:1 (1:1)")
+- Company names and logos (e.g., "LEDiL")
+- Title block text (PRODUCT, MATERIAL, SIZE, SHEET, TYPE, COLOUR/COATING)
+- Section labels (e.g., "SECTION A-A", "VIEW B-B", "Section A-A")
+- Zone/grid references (letters A-H and numbers 1-4 at drawing borders)
+- Notes section text that are instructions, not measurements
+- "FIRST ANGLE PROJECTION" text
+- Component/BOM table entries
+- Material specifications (e.g., "PBT", "WHITE")
 
-RULES:
-1. Extract the EXACT text as it appears on the drawing
-2. Include any symbols (Ø, R, ±, °) that are part of the dimension
-3. Include tolerance values if they are attached to the dimension
-4. Do NOT infer or calculate any values
-5. If you cannot clearly read a dimension, do not include it
+## RULES:
+1. Extract the EXACT text as it appears INCLUDING all modifiers
+2. Include symbols (Ø, R, ±, °, ×) that are part of the dimension
+3. Include tolerance values attached to dimensions
+4. Include quantity multipliers (2x, 4x) that appear near the dimension
+5. Include spacing notations (C/C, B.C.) that appear with the dimension
+6. If a modifier is visually associated with a dimension, include it
+7. Do NOT split a dimension from its modifiers
+8. Do NOT infer or calculate values
+9. If you cannot clearly read a dimension, skip it
+
+## QUALITY CHECK (verify before returning):
+- Did I include "(2x)" or "(4x)" where they appear?
+- Did I include "C/C" where it appears?
+- Did I include "TYP" where it appears?
+- Did I include "REF" where it appears?
+- Did I include "MAX"/"MIN" where they appear?
+- Did I include tolerance values where they appear?
+- Did I include "THRU" or depth callouts where they appear?
 
 Return a JSON object with this exact structure:
 {
-    "dimensions": ["12.50", "Ø25.00 ±0.05", "R5", "45°", "M8x1.25"]
+    "dimensions": ["35 C/C", "Ø3.4 (2x)", "Ø7.5 (2x)", "89.5°", "0.95 REF", "R5 TYP", "Ø44 B.C."]
 }
 
 If no dimensions are found, return:
