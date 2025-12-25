@@ -39,5 +39,8 @@ email-validator>=2.0.0
 # Environment Variables
 python-dotenv>=1.0.0
 
+pdf2image
+pypdf
+
 # Security
 passlib>=1.7.4
