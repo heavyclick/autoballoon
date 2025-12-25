@@ -14,6 +14,10 @@ export function DropZone({ onBeforeProcess }) {
   const [result, setResult] = useState(null);
   const [showPaywall, setShowPaywall] = useState(false);
   const [showRevisionCompare, setShowRevisionCompare] = useState(false);
+  
+  // NEW: Multi-page state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
 
   useEffect(() => { if (refreshUsage) refreshUsage(); }, []);
 
@@ -52,6 +56,9 @@ export function DropZone({ onBeforeProcess }) {
     setIsProcessing(true);
     setError(null);
     setResult(null);
+    setCurrentPage(1);
+    setTotalPages(1);
+    
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -61,6 +68,11 @@ export function DropZone({ onBeforeProcess }) {
       const response = await fetch(`${API_BASE_URL}/process`, { method: 'POST', headers, body: formData });
       const data = await response.json();
       if (data.success) {
+        // Handle multi-page response
+        if (data.pages && data.pages.length > 0) {
+          setTotalPages(data.total_pages || data.pages.length);
+          setCurrentPage(1);
+        }
         setResult(data);
         await incrementUsage();
         if (refreshUsage) await refreshUsage();
@@ -83,7 +95,7 @@ export function DropZone({ onBeforeProcess }) {
 
   const handleFileChange = (e) => { if (e.target.files?.[0]) processFile(e.target.files[0]); };
   const handleClick = () => { fileInputRef.current?.click(); };
-  const handleReset = () => { setResult(null); setError(null); };
+  const handleReset = () => { setResult(null); setError(null); setCurrentPage(1); setTotalPages(1); };
 
   const handleRevisionCompareResult = async (comparisonData) => {
     await incrementUsage();
@@ -99,7 +111,7 @@ export function DropZone({ onBeforeProcess }) {
 
   if (showPaywall) return <PaywallModal onClose={() => setShowPaywall(false)} usage={usage} />;
   if (showRevisionCompare) return <RevisionCompare onClose={() => setShowRevisionCompare(false)} onComplete={handleRevisionCompareResult} visitorId={visitorId} incrementUsage={incrementUsage} checkUsageLimit={checkUsageLimit} />;
-  if (result) return <BlueprintViewer result={result} onReset={handleReset} token={token} />;
+  if (result) return <BlueprintViewer result={result} onReset={handleReset} token={token} currentPage={currentPage} setCurrentPage={setCurrentPage} totalPages={totalPages} />;
 
   return (
     <div className="space-y-4">
@@ -118,7 +130,7 @@ export function DropZone({ onBeforeProcess }) {
           <div className="text-center">
             <div className="w-16 h-16 border-4 border-[#E63946] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
             <p className="text-xl font-medium text-white mb-2">Processing...</p>
-            <p className="text-gray-400 text-sm">Detecting dimensions, this may take a moment</p>
+            <p className="text-gray-400 text-sm">Detecting dimensions, this may take a moment for multi-page PDFs</p>
           </div>
         ) : (
           <div className="text-center">
@@ -129,7 +141,7 @@ export function DropZone({ onBeforeProcess }) {
             </div>
             <p className="text-xl font-medium text-white mb-2">{isDragging ? 'Drop your file here' : 'Drag & drop your blueprint'}</p>
             <p className="text-gray-400 mb-4">or <span className="text-[#E63946]">click to browse</span></p>
-            <p className="text-gray-500 text-sm">PDF, PNG, JPEG, TIFF - Max {MAX_FILE_SIZE_MB}MB</p>
+            <p className="text-gray-500 text-sm">PDF (multi-page supported), PNG, JPEG, TIFF - Max {MAX_FILE_SIZE_MB}MB</p>
           </div>
         )}
         {error && <div className="absolute inset-x-0 bottom-4 text-center"><p className="text-red-500 text-sm">{error}</p></div>}
@@ -192,7 +204,7 @@ function PaywallModal({ onClose, usage }) {
               <div><span className="text-3xl font-bold text-white">$99</span><span className="text-gray-400">/month</span></div>
             </div>
             <ul className="space-y-3 text-sm">
-              {['Unlimited blueprint processing', 'AS9102 Form 3 Excel exports', 'CMM results import', 'Revision comparison (Delta FAI)'].map((feature, i) => (
+              {['Unlimited blueprint processing', 'AS9102 Form 3 Excel exports', 'CMM results import', 'Revision comparison (Delta FAI)', 'Multi-page PDF support'].map((feature, i) => (
                 <li key={i} className="flex items-center gap-2 text-gray-300">
                   <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                   {feature}
@@ -388,23 +400,206 @@ function RevisionCompare({ onClose, onComplete, visitorId, incrementUsage, check
   );
 }
 
-// ============ BLUEPRINT VIEWER WITH DRAGGABLE BALLOONS ============
-// FIXED: Leader line now moves WITH balloon when dragging (not just stretches)
-function BlueprintViewer({ result, onReset, token }) {
+// ============ PAGE NAVIGATOR (NEW) ============
+function PageNavigator({ currentPage, totalPages, onPageChange, gridDetected }) {
+  if (totalPages <= 1) return null;
+  
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 bg-[#1a1a1a] rounded-lg px-3 py-2">
+        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        <span className="text-sm text-gray-300">
+          Page{' '}
+          <select
+            value={currentPage}
+            onChange={(e) => onPageChange(Number(e.target.value))}
+            className="bg-transparent text-white font-medium appearance-none cursor-pointer hover:text-[#E63946] transition-colors"
+          >
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+              <option key={page} value={page} className="bg-[#1a1a1a]">{page}</option>
+            ))}
+          </select>
+          <span className="text-gray-500"> of {totalPages}</span>
+        </span>
+      </div>
+      
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          disabled={currentPage <= 1}
+          className="p-2 rounded-lg bg-[#1a1a1a] text-gray-300 hover:bg-[#252525] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <button
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          disabled={currentPage >= totalPages}
+          className="p-2 rounded-lg bg-[#1a1a1a] text-gray-300 hover:bg-[#252525] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      </div>
+      
+      {gridDetected === false && (
+        <div className="flex items-center gap-1.5 text-xs text-amber-400/80 bg-amber-400/10 px-3 py-1.5 rounded-lg">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span>Standard grid</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============ DOWNLOAD MENU (NEW) ============
+function DownloadMenu({ onDownloadPDF, onDownloadZIP, onDownloadExcel, isDownloading, totalPages, totalDimensions }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleDownload = (action) => {
+    action();
+    setIsOpen(false);
+  };
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        disabled={isDownloading}
+        className="flex items-center gap-2 px-4 py-2 bg-[#E63946] hover:bg-[#c62d39] text-white font-medium rounded-lg transition-colors disabled:opacity-50"
+      >
+        {isDownloading ? (
+          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        ) : (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        )}
+        <span>{isDownloading ? 'Preparing...' : 'Download'}</span>
+        <svg className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {isOpen && !isDownloading && (
+        <div className="absolute right-0 mt-2 w-72 bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl shadow-2xl overflow-hidden z-50">
+          <div className="px-4 py-3 border-b border-[#2a2a2a] bg-[#161616]">
+            <p className="text-sm font-medium text-white">Export Options</p>
+            <p className="text-xs text-gray-400 mt-0.5">{totalPages} page{totalPages !== 1 ? 's' : ''} • {totalDimensions} dimension{totalDimensions !== 1 ? 's' : ''}</p>
+          </div>
+
+          <div className="p-2">
+            <button onClick={() => handleDownload(onDownloadPDF)} className="w-full flex items-start gap-3 p-3 rounded-lg hover:bg-[#252525] transition-colors text-left group">
+              <div className="p-2 rounded-lg bg-[#E63946]/10 text-[#E63946] group-hover:bg-[#E63946]/20">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-white">Ballooned PDF</p>
+                <p className="text-xs text-gray-400 mt-0.5">All pages with balloon markers</p>
+              </div>
+            </button>
+
+            <button onClick={() => handleDownload(onDownloadZIP)} className="w-full flex items-start gap-3 p-3 rounded-lg hover:bg-[#252525] transition-colors text-left group">
+              <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400 group-hover:bg-blue-500/20">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-white">FAI Package (ZIP)</p>
+                <p className="text-xs text-gray-400 mt-0.5">Images + AS9102 Excel + README</p>
+              </div>
+              <span className="text-[10px] font-medium text-green-400 bg-green-400/10 px-2 py-0.5 rounded-full self-center">RECOMMENDED</span>
+            </button>
+
+            <button onClick={() => handleDownload(onDownloadExcel)} className="w-full flex items-start gap-3 p-3 rounded-lg hover:bg-[#252525] transition-colors text-left group">
+              <div className="p-2 rounded-lg bg-green-500/10 text-green-400 group-hover:bg-green-500/20">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-white">AS9102 Excel Only</p>
+                <p className="text-xs text-gray-400 mt-0.5">Form 3 spreadsheet</p>
+              </div>
+            </button>
+          </div>
+
+          <div className="px-4 py-2.5 border-t border-[#2a2a2a] bg-[#0a0a0a]">
+            <p className="text-[11px] text-gray-500">All exports include AS9102 Rev C compliant formatting</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============ BLUEPRINT VIEWER WITH MULTI-PAGE SUPPORT ============
+function BlueprintViewer({ result, onReset, token, currentPage, setCurrentPage, totalPages: initialTotalPages }) {
   const [isExporting, setIsExporting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  // FIXED: Store anchor and balloon positions separately for proper drag behavior
+  
+  // Multi-page support
+  const hasMultiplePages = result.pages && result.pages.length > 1;
+  const totalPages = hasMultiplePages ? result.pages.length : (initialTotalPages || 1);
+  
+  // Get current page data
+  const getCurrentPageData = () => {
+    if (hasMultiplePages) {
+      return result.pages.find(p => p.page_number === currentPage) || result.pages[0];
+    }
+    return { image: result.image, dimensions: result.dimensions || [], grid_detected: result.grid?.detected };
+  };
+  
+  const currentPageData = getCurrentPageData();
+  const currentImage = hasMultiplePages ? `data:image/png;base64,${currentPageData.image}` : (currentPageData.image?.startsWith('data:') ? currentPageData.image : `data:image/png;base64,${currentPageData.image}`);
+  
+  // Get dimensions for current page (with page filtering for multi-page)
+  const getPageDimensions = () => {
+    if (hasMultiplePages) {
+      return currentPageData.dimensions || [];
+    }
+    return result.dimensions || [];
+  };
+  
   const [dimensions, setDimensions] = useState(() => 
-    (result.dimensions || []).map(d => ({
+    getPageDimensions().map(d => ({
       ...d,
-      // Anchor point (where leader line starts - on the dimension)
       anchorX: (d.bounding_box.xmin + d.bounding_box.xmax) / 2 / 10,
       anchorY: (d.bounding_box.ymin + d.bounding_box.ymax) / 2 / 10,
-      // Balloon position (the circle with the number)
       balloonX: (d.bounding_box.xmin + d.bounding_box.xmax) / 2 / 10 + 4,
       balloonY: (d.bounding_box.ymin + d.bounding_box.ymax) / 2 / 10 - 4,
     }))
   );
+  
+  // Update dimensions when page changes
+  useEffect(() => {
+    const pageDims = getPageDimensions();
+    setDimensions(pageDims.map(d => ({
+      ...d,
+      anchorX: (d.bounding_box.xmin + d.bounding_box.xmax) / 2 / 10,
+      anchorY: (d.bounding_box.ymin + d.bounding_box.ymax) / 2 / 10,
+      balloonX: (d.bounding_box.xmin + d.bounding_box.xmax) / 2 / 10 + 4,
+      balloonY: (d.bounding_box.ymin + d.bounding_box.ymax) / 2 / 10 - 4,
+    })));
+  }, [currentPage, result]);
+  
   const [isAddingBalloon, setIsAddingBalloon] = useState(false);
   const [newBalloonValue, setNewBalloonValue] = useState('');
   const [showCMMImport, setShowCMMImport] = useState(false);
@@ -412,13 +607,150 @@ function BlueprintViewer({ result, onReset, token }) {
   const containerRef = useRef(null);
   const imageRef = useRef(null);
   
+  // Get total dimensions across all pages
+  const getTotalDimensions = () => {
+    if (hasMultiplePages) {
+      return result.pages.reduce((sum, p) => sum + (p.dimensions?.length || 0), 0);
+    }
+    return result.dimensions?.length || 0;
+  };
+  
+  // NEW: Download handlers for multi-page
+  const handleDownloadPDF = async () => {
+    setIsDownloading(true);
+    try {
+      const payload = {
+        pages: hasMultiplePages 
+          ? result.pages.map(p => ({
+              page_number: p.page_number,
+              image: p.image,
+              width: p.width || 1700,
+              height: p.height || 2200,
+              dimensions: p.dimensions || [],
+              grid_detected: p.grid_detected !== false
+            }))
+          : [{
+              page_number: 1,
+              image: result.image?.replace(/^data:image\/\w+;base64,/, '') || '',
+              width: result.metadata?.width || 1700,
+              height: result.metadata?.height || 2200,
+              dimensions: result.dimensions || [],
+              grid_detected: result.grid?.detected !== false
+            }],
+        part_number: result.metadata?.part_number || '',
+        revision: result.metadata?.revision || '',
+        grid_detected: hasMultiplePages ? result.pages.every(p => p.grid_detected !== false) : (result.grid?.detected !== false)
+      };
+      
+      const response = await fetch(`${API_BASE_URL.replace('/api', '')}/download/pdf`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token && { 'Authorization': `Bearer ${token}` }) },
+        body: JSON.stringify(payload)
+      });
+      
+      if (response.ok) {
+        const blob = await response.blob();
+        const filename = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || 'ballooned_drawing.pdf';
+        downloadBlob(blob, filename);
+      }
+    } catch (err) { console.error('PDF download failed:', err); }
+    finally { setIsDownloading(false); }
+  };
+
+  const handleDownloadZIP = async () => {
+    setIsDownloading(true);
+    try {
+      const payload = {
+        pages: hasMultiplePages 
+          ? result.pages.map(p => ({
+              page_number: p.page_number,
+              image: p.image,
+              width: p.width || 1700,
+              height: p.height || 2200,
+              dimensions: p.dimensions || [],
+              grid_detected: p.grid_detected !== false
+            }))
+          : [{
+              page_number: 1,
+              image: result.image?.replace(/^data:image\/\w+;base64,/, '') || '',
+              width: result.metadata?.width || 1700,
+              height: result.metadata?.height || 2200,
+              dimensions: result.dimensions || [],
+              grid_detected: result.grid?.detected !== false
+            }],
+        part_number: result.metadata?.part_number || '',
+        revision: result.metadata?.revision || '',
+        grid_detected: hasMultiplePages ? result.pages.every(p => p.grid_detected !== false) : (result.grid?.detected !== false)
+      };
+      
+      const response = await fetch(`${API_BASE_URL.replace('/api', '')}/download/zip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token && { 'Authorization': `Bearer ${token}` }) },
+        body: JSON.stringify(payload)
+      });
+      
+      if (response.ok) {
+        const blob = await response.blob();
+        const filename = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || 'FAI_package.zip';
+        downloadBlob(blob, filename);
+      }
+    } catch (err) { console.error('ZIP download failed:', err); }
+    finally { setIsDownloading(false); }
+  };
+
+  const handleDownloadExcel = async () => {
+    setIsDownloading(true);
+    try {
+      const payload = {
+        pages: hasMultiplePages 
+          ? result.pages.map(p => ({
+              page_number: p.page_number,
+              image: p.image,
+              width: p.width || 1700,
+              height: p.height || 2200,
+              dimensions: p.dimensions || [],
+              grid_detected: p.grid_detected !== false
+            }))
+          : [{
+              page_number: 1,
+              image: result.image?.replace(/^data:image\/\w+;base64,/, '') || '',
+              width: result.metadata?.width || 1700,
+              height: result.metadata?.height || 2200,
+              dimensions: result.dimensions || [],
+              grid_detected: result.grid?.detected !== false
+            }],
+        part_number: result.metadata?.part_number || '',
+        revision: result.metadata?.revision || '',
+        grid_detected: hasMultiplePages ? result.pages.every(p => p.grid_detected !== false) : (result.grid?.detected !== false)
+      };
+      
+      const response = await fetch(`${API_BASE_URL.replace('/api', '')}/download/excel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token && { 'Authorization': `Bearer ${token}` }) },
+        body: JSON.stringify(payload)
+      });
+      
+      if (response.ok) {
+        const blob = await response.blob();
+        const filename = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || 'AS9102_Form3.xlsx';
+        downloadBlob(blob, filename);
+      }
+    } catch (err) { console.error('Excel download failed:', err); }
+    finally { setIsDownloading(false); }
+  };
+  
+  // Legacy export (keeping for CSV compatibility)
   const handleExport = async (format = 'xlsx') => {
     setIsExporting(true);
     try {
+      const allDimensions = hasMultiplePages 
+        ? result.pages.flatMap(p => (p.dimensions || []).map(d => ({ ...d, page: p.page_number })))
+        : dimensions.map(d => ({ id: d.id, value: d.value, zone: d.zone, actual: cmmResults[d.id]?.actual || '' }));
+      
       const response = await fetch(`${API_BASE_URL}/export`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token && { 'Authorization': `Bearer ${token}` }) },
-        body: JSON.stringify({ format, template: 'AS9102_FORM3', dimensions: dimensions.map(d => ({ id: d.id, value: d.value, zone: d.zone, actual: cmmResults[d.id]?.actual || '' })), filename: result.metadata?.filename || 'inspection' }),
+        body: JSON.stringify({ format, template: 'AS9102_FORM3', dimensions: allDimensions, filename: result.metadata?.filename || 'inspection', total_pages: totalPages }),
       });
       if (response.ok) {
         const blob = await response.blob();
@@ -468,7 +800,7 @@ function BlueprintViewer({ result, onReset, token }) {
       canvas.toBlob((blob) => {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url;
-        a.download = `${result.metadata?.filename || 'blueprint'}_ballooned.png`;
+        a.download = `${result.metadata?.filename || 'blueprint'}_page${currentPage}_ballooned.png`;
         document.body.appendChild(a); a.click();
         window.URL.revokeObjectURL(url); a.remove();
         setIsDownloading(false);
@@ -492,7 +824,7 @@ function BlueprintViewer({ result, onReset, token }) {
     const zone = `${columns[Math.min(colIndex, 7)]}${rows[Math.min(rowIndex, 3)]}`;
     const newId = dimensions.length > 0 ? Math.max(...dimensions.map(d => d.id)) + 1 : 1;
     setDimensions(prev => [...prev, {
-      id: newId, value: newBalloonValue.trim(), zone,
+      id: newId, value: newBalloonValue.trim(), zone, page: currentPage,
       bounding_box: { xmin: x - 20, xmax: x + 20, ymin: y - 10, ymax: y + 10 },
       anchorX: xPercent, anchorY: yPercent,
       balloonX: xPercent + 4, balloonY: yPercent - 4,
@@ -501,7 +833,6 @@ function BlueprintViewer({ result, onReset, token }) {
     setIsAddingBalloon(false);
   };
 
-  // FIXED: Move BOTH anchor and balloon together when dragging
   const handleBalloonDrag = (id, deltaX, deltaY) => {
     setDimensions(prev => prev.map(d => {
       if (d.id !== id) return d;
@@ -527,9 +858,36 @@ function BlueprintViewer({ result, onReset, token }) {
             New Upload
           </button>
           <div className="h-6 w-px bg-[#2a2a2a]" />
-          <span className="text-sm"><span className="text-gray-400">Detected: </span><span className="text-white font-medium">{dimensions.length} dimensions</span></span>
-          {result.grid?.detected && <><div className="h-6 w-px bg-[#2a2a2a]" /><span className="text-sm"><span className="text-gray-400">Grid: </span><span className="text-white font-medium">{result.grid.columns?.length}x{result.grid.rows?.length}</span></span></>}
+          
+          {/* NEW: Page Navigator */}
+          {totalPages > 1 && (
+            <>
+              <PageNavigator 
+                currentPage={currentPage} 
+                totalPages={totalPages} 
+                onPageChange={setCurrentPage}
+                gridDetected={currentPageData.grid_detected}
+              />
+              <div className="h-6 w-px bg-[#2a2a2a]" />
+            </>
+          )}
+          
+          <span className="text-sm">
+            <span className="text-gray-400">This page: </span>
+            <span className="text-white font-medium">{dimensions.length} dimensions</span>
+            {totalPages > 1 && (
+              <span className="text-gray-500 ml-2">({getTotalDimensions()} total)</span>
+            )}
+          </span>
+          
+          {result.grid?.detected && !hasMultiplePages && <><div className="h-6 w-px bg-[#2a2a2a]" /><span className="text-sm"><span className="text-gray-400">Grid: </span><span className="text-white font-medium">{result.grid.columns?.length}x{result.grid.rows?.length}</span></span></>}
           {result.metadata?.processing_time_ms && <><div className="h-6 w-px bg-[#2a2a2a]" /><span className="text-sm"><span className="text-gray-400">Time: </span><span className="text-white font-medium">{(result.metadata.processing_time_ms / 1000).toFixed(1)}s</span></span></>}
+          
+          {/* Show message if pages were truncated */}
+          {result.message && (
+            <span className="text-amber-400 text-sm bg-amber-400/10 px-3 py-1 rounded-full">{result.message}</span>
+          )}
+          
           <div className="h-6 w-px bg-[#2a2a2a]" />
           {isAddingBalloon ? (
             <div className="flex items-center gap-2">
@@ -548,22 +906,30 @@ function BlueprintViewer({ result, onReset, token }) {
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
             Import CMM
           </button>
-          <button onClick={handleDownloadImage} disabled={isDownloading} className="px-4 py-2 bg-[#1a1a1a] hover:bg-[#252525] text-gray-300 rounded-lg transition-colors text-sm disabled:opacity-50">{isDownloading ? 'Saving...' : 'Download Image'}</button>
-          <button onClick={() => handleExport('csv')} disabled={isExporting} className="px-4 py-2 bg-[#1a1a1a] hover:bg-[#252525] text-gray-300 rounded-lg transition-colors text-sm disabled:opacity-50">Export CSV</button>
-          <button onClick={() => handleExport('xlsx')} disabled={isExporting} className="px-4 py-2 bg-[#E63946] hover:bg-[#c62d39] text-white font-medium rounded-lg transition-colors text-sm disabled:opacity-50 flex items-center gap-2">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-            AS9102 Excel
+          <button onClick={handleDownloadImage} disabled={isDownloading} className="px-4 py-2 bg-[#1a1a1a] hover:bg-[#252525] text-gray-300 rounded-lg transition-colors text-sm disabled:opacity-50">
+            {isDownloading ? 'Saving...' : `Save Page ${currentPage}`}
           </button>
+          <button onClick={() => handleExport('csv')} disabled={isExporting} className="px-4 py-2 bg-[#1a1a1a] hover:bg-[#252525] text-gray-300 rounded-lg transition-colors text-sm disabled:opacity-50">Export CSV</button>
+          
+          {/* NEW: Download Menu for multi-page exports */}
+          <DownloadMenu
+            onDownloadPDF={handleDownloadPDF}
+            onDownloadZIP={handleDownloadZIP}
+            onDownloadExcel={handleDownloadExcel}
+            isDownloading={isDownloading}
+            totalPages={totalPages}
+            totalDimensions={getTotalDimensions()}
+          />
         </div>
       </div>
 
       <div className="bg-[#1a1a1a] rounded-lg px-3 py-2 text-sm text-gray-400 flex items-center gap-2">
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-        <span>Tip: Drag balloons to reposition them. The balloon and leader line move together.</span>
+        <span>Tip: Drag balloons to reposition. {totalPages > 1 ? 'Use page navigation or ← → keys to switch pages.' : ''}</span>
       </div>
 
       <div ref={containerRef} className={`relative bg-[#0a0a0a] rounded-xl overflow-hidden ${isAddingBalloon ? 'cursor-crosshair' : ''}`} style={{ minHeight: '500px' }} onClick={handleImageClick}>
-        {result.image && <img ref={imageRef} src={result.image} alt="Blueprint" className="w-full h-auto" crossOrigin="anonymous" />}
+        {currentImage && <img ref={imageRef} src={currentImage} alt={`Blueprint Page ${currentPage}`} className="w-full h-auto" crossOrigin="anonymous" />}
         <svg className="absolute inset-0 w-full h-full pointer-events-none">
           {dimensions.map((dim) => (
             <g key={`leader-${dim.id}`}>
@@ -579,7 +945,14 @@ function BlueprintViewer({ result, onReset, token }) {
       </div>
 
       <div className="bg-[#0a0a0a] rounded-xl overflow-hidden">
-        <div className="px-4 py-3 bg-[#1a1a1a] border-b border-[#2a2a2a]"><h3 className="font-medium text-white">Detected Dimensions</h3></div>
+        <div className="px-4 py-3 bg-[#1a1a1a] border-b border-[#2a2a2a] flex items-center justify-between">
+          <h3 className="font-medium text-white">
+            Dimensions {totalPages > 1 ? `(Page ${currentPage})` : ''}
+          </h3>
+          {totalPages > 1 && (
+            <span className="text-xs text-gray-500">Showing {dimensions.length} of {getTotalDimensions()} total</span>
+          )}
+        </div>
         <div className="max-h-64 overflow-auto">
           <table className="w-full text-sm">
             <thead className="bg-[#161616] sticky top-0"><tr><th className="px-4 py-2 text-left text-gray-400 font-medium">#</th><th className="px-4 py-2 text-left text-gray-400 font-medium">Zone</th><th className="px-4 py-2 text-left text-gray-400 font-medium">Nominal</th><th className="px-4 py-2 text-left text-gray-400 font-medium">Actual</th><th className="px-4 py-2 text-left text-gray-400 font-medium">Status</th><th className="px-4 py-2 text-right text-gray-400 font-medium">Actions</th></tr></thead>
@@ -596,11 +969,23 @@ function BlueprintViewer({ result, onReset, token }) {
               ))}
             </tbody>
           </table>
-          {dimensions.length === 0 && <div className="px-4 py-8 text-center text-gray-500">No dimensions detected.</div>}
+          {dimensions.length === 0 && <div className="px-4 py-8 text-center text-gray-500">No dimensions on this page.</div>}
         </div>
       </div>
     </div>
   );
+}
+
+// ============ HELPER FUNCTION ============
+function downloadBlob(blob, filename) {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  a.remove();
 }
 
 // ============ DRAGGABLE BALLOON ============
