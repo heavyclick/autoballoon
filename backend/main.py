@@ -1,10 +1,13 @@
 """
 AutoBalloon Backend
 FastAPI application for manufacturing blueprint dimension detection
+
+Updated with:
+- Multi-page PDF support
+- Download routes for ballooned PDF/ZIP/Images
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from config import CORS_ORIGINS, APP_NAME, APP_VERSION
 
 app = FastAPI(
@@ -30,13 +33,14 @@ from api.auth_routes import router as auth_router
 from api.payment_routes import router as payment_router
 from api.usage_routes import router as usage_router
 from api.history_routes import router as history_router
+from api.download_routes import router as download_router  # NEW
 
 app.include_router(main_router)
 app.include_router(auth_router)
 app.include_router(payment_router)
 app.include_router(usage_router)
 app.include_router(history_router)
-
+app.include_router(download_router)  # NEW
 
 @app.get("/")
 async def root():
@@ -47,11 +51,9 @@ async def root():
         "docs": "/docs"
     }
 
-
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
-
 
 @app.get("/api")
 async def api_root():
@@ -59,16 +61,25 @@ async def api_root():
         "name": f"{APP_NAME} API",
         "version": APP_VERSION,
         "endpoints": [
+            # Processing
             "/api/process",
             "/api/export",
+            # Downloads (NEW)
+            "/download/pdf",
+            "/download/zip", 
+            "/download/image",
+            "/download/excel",
+            # Auth
             "/api/auth/magic-link",
             "/api/auth/verify",
+            # Payments
             "/api/payments/pricing",
+            # Usage
             "/api/usage/check",
+            # History
             "/api/history"
         ]
     }
-
 
 if __name__ == "__main__":
     import uvicorn
