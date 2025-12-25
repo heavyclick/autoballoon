@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useUsage } from '../hooks/useUsage';
 import { API_BASE_URL, MAX_FILE_SIZE_MB, ALLOWED_EXTENSIONS } from '../constants/config';
@@ -15,6 +15,23 @@ export function DropZone({ onBeforeProcess }) {
   const [showPaywall, setShowPaywall] = useState(false);
   const [showRevisionCompare, setShowRevisionCompare] = useState(false);
 
+  // Check usage on mount
+  useEffect(() => { if (refreshUsage) refreshUsage(); }, []);
+
+  const checkUsageLimit = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/usage/check?visitor_id=${visitorId}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (!data.is_pro && data.remaining <= 0) {
+          setShowPaywall(true);
+          return false;
+        }
+      }
+    } catch (e) {}
+    return true;
+  };
+
   const handleDragEnter = useCallback((e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }, []);
   const handleDragLeave = useCallback((e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); }, []);
   const handleDragOver = useCallback((e) => { e.preventDefault(); e.stopPropagation(); }, []);
@@ -27,24 +44,9 @@ export function DropZone({ onBeforeProcess }) {
     return null;
   };
 
-const processFile = async (file) => {
-  // Fetch fresh usage data
-  let currentUsage = usage;
-  try {
-    const response = await fetch(`${API_BASE_URL}/usage/check?visitor_id=${visitorId}`);
-    if (response.ok) {
-      currentUsage = await response.json();
-    }
-  } catch (e) {}
-  
-  // Check with fresh data
-  if (!isPro && currentUsage.remaining <= 0) { 
-    setShowPaywall(true); 
-    return; 
-  }
-  
-  // ... rest of function
-}
+  const processFile = async (file) => {
+    const canProceed = await checkUsageLimit();
+    if (!canProceed) return;
 
     const validationError = validateFile(file);
     if (validationError) { setError(validationError); return; }
@@ -90,41 +92,37 @@ const processFile = async (file) => {
   const handleClick = () => { fileInputRef.current?.click(); };
   const handleReset = () => { setResult(null); setError(null); };
 
-  const handleRevisionCompareResult = (comparisonData) => {
+  const handleRevisionCompareResult = async (comparisonData) => {
+    // Increment usage for comparison too
+    await incrementUsage();
+    if (refreshUsage) await refreshUsage();
     setResult(comparisonData);
     setShowRevisionCompare(false);
   };
 
+  const handleOpenCompare = async () => {
+    const canProceed = await checkUsageLimit();
+    if (canProceed) setShowRevisionCompare(true);
+  };
+
   if (showPaywall) return <PaywallModal onClose={() => setShowPaywall(false)} usage={usage} />;
-  if (showRevisionCompare) return <RevisionCompare onClose={() => setShowRevisionCompare(false)} onComplete={handleRevisionCompareResult} />;
+  if (showRevisionCompare) return <RevisionCompare onClose={() => setShowRevisionCompare(false)} onComplete={handleRevisionCompareResult} visitorId={visitorId} incrementUsage={incrementUsage} checkUsageLimit={checkUsageLimit} />;
   if (result) return <BlueprintViewer result={result} onReset={handleReset} token={token} />;
 
   return (
     <div className="space-y-4">
-      {/* Compare Revisions Button */}
       <div className="flex justify-center">
-        <button
-          onClick={() => setShowRevisionCompare(true)}
-          className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-xl transition-all text-sm flex items-center gap-2 font-medium shadow-lg"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-          </svg>
+        <button onClick={handleOpenCompare} className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-xl transition-all text-sm flex items-center gap-2 font-medium shadow-lg">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
           Compare Revisions (Delta FAI)
         </button>
       </div>
 
-      {/* Main Drop Zone */}
       <div
         className={`relative border-2 border-dashed rounded-xl p-12 transition-all duration-200 cursor-pointer ${isDragging ? 'border-[#E63946] bg-[#E63946]/10' : 'border-[#2a2a2a] hover:border-[#3a3a3a] hover:bg-[#1a1a1a]'} ${isProcessing ? 'pointer-events-none' : ''}`}
-        onDragEnter={handleDragEnter}
-        onDragLeave={handleDragLeave}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
-        onClick={handleClick}
+        onDragEnter={handleDragEnter} onDragLeave={handleDragLeave} onDragOver={handleDragOver} onDrop={handleDrop} onClick={handleClick}
       >
         <input ref={fileInputRef} type="file" accept={ALLOWED_EXTENSIONS.join(',')} onChange={handleFileChange} className="hidden" />
-
         {isProcessing ? (
           <div className="text-center">
             <div className="w-16 h-16 border-4 border-[#E63946] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
@@ -143,7 +141,6 @@ const processFile = async (file) => {
             <p className="text-gray-500 text-sm">PDF, PNG, JPEG, TIFF - Max {MAX_FILE_SIZE_MB}MB</p>
           </div>
         )}
-
         {error && <div className="absolute inset-x-0 bottom-4 text-center"><p className="text-red-500 text-sm">{error}</p></div>}
       </div>
     </div>
@@ -152,42 +149,165 @@ const processFile = async (file) => {
 
 // ============ PAYWALL MODAL ============
 function PaywallModal({ onClose, usage }) {
+  const [email, setEmail] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [countdown, setCountdown] = useState({ hours: 24, minutes: 0, seconds: 0 });
+
+  // Check if LemonSqueezy is configured
+  const isPaymentConfigured = false; // Will be true when env vars are set
+
+  useEffect(() => {
+    if (!isPaymentConfigured) {
+      const timer = setInterval(() => {
+        setCountdown(prev => {
+          let { hours, minutes, seconds } = prev;
+          if (seconds > 0) seconds--;
+          else if (minutes > 0) { minutes--; seconds = 59; }
+          else if (hours > 0) { hours--; minutes = 59; seconds = 59; }
+          return { hours, minutes, seconds };
+        });
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [isPaymentConfigured]);
+
+  const handleEmailSubmit = async (e) => {
+    e.preventDefault();
+    if (!email) return;
+    setIsSubmitting(true);
+    try {
+      await fetch(`${API_BASE_URL}/waitlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      setSubmitted(true);
+    } catch (err) {
+      console.error('Failed to join waitlist:', err);
+    }
+    setIsSubmitting(false);
+  };
+
+  if (isPaymentConfigured) {
+    // Normal paywall with payment
+    return (
+      <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+        <div className="bg-[#161616] rounded-2xl max-w-md w-full p-8 relative">
+          <button onClick={onClose} className="absolute top-4 right-4 text-gray-500 hover:text-white">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+          <div className="text-center mb-6">
+            <div className="w-16 h-16 bg-[#E63946]/20 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-[#E63946]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+            </div>
+            <h2 className="text-2xl font-bold text-white mb-2">Free Limit Reached</h2>
+            <p className="text-gray-400">You have used all {usage?.limit || 3} free drawings this month.</p>
+          </div>
+          <div className="bg-[#1a1a1a] rounded-xl p-6 mb-6">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-white font-semibold">Pro Plan</span>
+              <div><span className="text-3xl font-bold text-white">$99</span><span className="text-gray-400">/month</span></div>
+            </div>
+            <ul className="space-y-3 text-sm">
+              {['Unlimited blueprint processing', 'AS9102 Form 3 Excel exports', 'CMM results import', 'Revision comparison (Delta FAI)'].map((feature, i) => (
+                <li key={i} className="flex items-center gap-2 text-gray-300">
+                  <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                  {feature}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <a href="/pricing" className="block w-full py-3 bg-[#E63946] hover:bg-[#c62d39] text-white font-semibold rounded-lg text-center transition-colors">Upgrade to Pro</a>
+          <p className="text-center text-gray-500 text-sm mt-4">Free limit resets on the 1st of each month</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Beta waitlist mode
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
       <div className="bg-[#161616] rounded-2xl max-w-md w-full p-8 relative">
         <button onClick={onClose} className="absolute top-4 right-4 text-gray-500 hover:text-white">
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
-        <div className="text-center mb-6">
-          <div className="w-16 h-16 bg-[#E63946]/20 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-[#E63946]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+        
+        {!submitted ? (
+          <>
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-2">You are Early!</h2>
+              <p className="text-gray-400">AutoBalloon Pro launches in</p>
+            </div>
+
+            {/* Countdown */}
+            <div className="flex justify-center gap-4 mb-6">
+              <div className="bg-[#1a1a1a] rounded-lg p-3 text-center min-w-[70px]">
+                <div className="text-2xl font-bold text-white">{String(countdown.hours).padStart(2, '0')}</div>
+                <div className="text-xs text-gray-500">HOURS</div>
+              </div>
+              <div className="bg-[#1a1a1a] rounded-lg p-3 text-center min-w-[70px]">
+                <div className="text-2xl font-bold text-white">{String(countdown.minutes).padStart(2, '0')}</div>
+                <div className="text-xs text-gray-500">MINS</div>
+              </div>
+              <div className="bg-[#1a1a1a] rounded-lg p-3 text-center min-w-[70px]">
+                <div className="text-2xl font-bold text-white">{String(countdown.seconds).padStart(2, '0')}</div>
+                <div className="text-xs text-gray-500">SECS</div>
+              </div>
+            </div>
+
+            <div className="bg-[#1a1a1a] rounded-xl p-4 mb-6">
+              <p className="text-gray-300 text-sm text-center">
+                Be the first to know when we launch. Get <span className="text-[#E63946] font-semibold">50% off</span> as an early supporter.
+              </p>
+            </div>
+
+            <form onSubmit={handleEmailSubmit} className="space-y-4">
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Enter your email"
+                className="w-full px-4 py-3 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-white placeholder-gray-500 focus:border-[#E63946] focus:outline-none"
+                required
+              />
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-semibold rounded-lg transition-colors disabled:opacity-50"
+              >
+                {isSubmitting ? 'Joining...' : 'Notify Me at Launch'}
+              </button>
+            </form>
+
+            <p className="text-center text-gray-500 text-xs mt-4">
+              No spam. Just one email when Pro is ready.
+            </p>
+          </>
+        ) : (
+          <div className="text-center py-8">
+            <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h2 className="text-2xl font-bold text-white mb-2">You are on the List!</h2>
+            <p className="text-gray-400 mb-4">We will email you the moment AutoBalloon Pro launches.</p>
+            <p className="text-[#E63946] font-semibold">50% early bird discount reserved</p>
           </div>
-          <h2 className="text-2xl font-bold text-white mb-2">Free Limit Reached</h2>
-          <p className="text-gray-400">You have used all {usage?.limit || 3} free drawings this month.</p>
-        </div>
-        <div className="bg-[#1a1a1a] rounded-xl p-6 mb-6">
-          <div className="flex justify-between items-center mb-4">
-            <span className="text-white font-semibold">Pro Plan</span>
-            <div><span className="text-3xl font-bold text-white">$99</span><span className="text-gray-400">/month</span></div>
-          </div>
-          <ul className="space-y-3 text-sm">
-            {['Unlimited blueprint processing', 'AS9102 Form 3 Excel exports', 'CMM results import', 'Revision comparison (Delta FAI)'].map((feature, i) => (
-              <li key={i} className="flex items-center gap-2 text-gray-300">
-                <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                {feature}
-              </li>
-            ))}
-          </ul>
-        </div>
-        <a href="/pricing" className="block w-full py-3 bg-[#E63946] hover:bg-[#c62d39] text-white font-semibold rounded-lg text-center transition-colors">Upgrade to Pro</a>
-        <p className="text-center text-gray-500 text-sm mt-4">Free limit resets on the 1st of each month</p>
+        )}
       </div>
     </div>
   );
 }
 
 // ============ REVISION COMPARE ============
-function RevisionCompare({ onClose, onComplete }) {
+function RevisionCompare({ onClose, onComplete, visitorId, incrementUsage, checkUsageLimit }) {
   const [revA, setRevA] = useState(null);
   const [revB, setRevB] = useState(null);
   const [isComparing, setIsComparing] = useState(false);
@@ -204,6 +324,11 @@ function RevisionCompare({ onClose, onComplete }) {
 
   const handleCompare = async () => {
     if (!revA || !revB) return;
+    
+    // Check usage limit before comparing
+    const canProceed = await checkUsageLimit();
+    if (!canProceed) { onClose(); return; }
+    
     setIsComparing(true);
     
     try {
@@ -223,66 +348,42 @@ function RevisionCompare({ onClose, onComplete }) {
         const dimsB = dataB.dimensions || [];
         const changes = { added: [], removed: [], modified: [], unchanged: [] };
         
-        // Filter out dimensions in the title block area (bottom 20% of drawing)
         const filterTitleBlock = (dims) => dims.filter(d => {
           const centerY = (d.bounding_box.ymin + d.bounding_box.ymax) / 2;
-          return centerY < 800; // Exclude bottom 20%
+          return centerY < 800;
         });
         
         const filteredA = filterTitleBlock(dimsA);
         const filteredB = filterTitleBlock(dimsB);
-        
-        // Use tighter tolerance for matching (20 instead of 50)
         const TOLERANCE = 20;
         
         filteredB.forEach(dimB => {
+          const centerBX = (dimB.bounding_box.xmin + dimB.bounding_box.xmax) / 2;
+          const centerBY = (dimB.bounding_box.ymin + dimB.bounding_box.ymax) / 2;
+          
           const matchA = filteredA.find(dimA => {
             const centerAX = (dimA.bounding_box.xmin + dimA.bounding_box.xmax) / 2;
             const centerAY = (dimA.bounding_box.ymin + dimA.bounding_box.ymax) / 2;
-            const centerBX = (dimB.bounding_box.xmin + dimB.bounding_box.xmax) / 2;
-            const centerBY = (dimB.bounding_box.ymin + dimB.bounding_box.ymax) / 2;
-            
-            return Math.abs(centerAX - centerBX) < TOLERANCE && 
-                   Math.abs(centerAY - centerBY) < TOLERANCE;
+            return Math.abs(centerAX - centerBX) < TOLERANCE && Math.abs(centerAY - centerBY) < TOLERANCE;
           });
           
-          if (!matchA) {
-            changes.added.push({ ...dimB, changeType: 'added' });
-          } else if (matchA.value !== dimB.value) {
-            changes.modified.push({ ...dimB, changeType: 'modified', oldValue: matchA.value, newValue: dimB.value });
-          } else {
-            changes.unchanged.push({ ...dimB, changeType: 'unchanged' });
-          }
+          if (!matchA) changes.added.push({ ...dimB, changeType: 'added' });
+          else if (matchA.value !== dimB.value) changes.modified.push({ ...dimB, changeType: 'modified', oldValue: matchA.value, newValue: dimB.value });
+          else changes.unchanged.push({ ...dimB, changeType: 'unchanged' });
         });
         
         filteredA.forEach(dimA => {
           const centerAX = (dimA.bounding_box.xmin + dimA.bounding_box.xmax) / 2;
           const centerAY = (dimA.bounding_box.ymin + dimA.bounding_box.ymax) / 2;
-          
           const matchB = filteredB.find(dimB => {
             const centerBX = (dimB.bounding_box.xmin + dimB.bounding_box.xmax) / 2;
             const centerBY = (dimB.bounding_box.ymin + dimB.bounding_box.ymax) / 2;
-            
-            return Math.abs(centerAX - centerBX) < TOLERANCE && 
-                   Math.abs(centerAY - centerBY) < TOLERANCE;
+            return Math.abs(centerAX - centerBX) < TOLERANCE && Math.abs(centerAY - centerBY) < TOLERANCE;
           });
-          
-          if (!matchB) {
-            changes.removed.push({ ...dimA, changeType: 'removed' });
-          }
+          if (!matchB) changes.removed.push({ ...dimA, changeType: 'removed' });
         });
         
-        setComparisonResult({ 
-          revA: dataA, 
-          revB: dataB, 
-          changes, 
-          summary: { 
-            added: changes.added.length, 
-            removed: changes.removed.length, 
-            modified: changes.modified.length, 
-            unchanged: changes.unchanged.length 
-          } 
-        });
+        setComparisonResult({ revA: dataA, revB: dataB, changes, summary: { added: changes.added.length, removed: changes.removed.length, modified: changes.modified.length, unchanged: changes.unchanged.length } });
       }
     } catch (err) {
       console.error('Comparison failed:', err);
@@ -365,15 +466,18 @@ function RevisionCompare({ onClose, onComplete }) {
   );
 }
 
-// ============ BLUEPRINT VIEWER ============
+// ============ BLUEPRINT VIEWER WITH DRAGGABLE BALLOONS ============
 function BlueprintViewer({ result, onReset, token }) {
   const [isExporting, setIsExporting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [dimensions, setDimensions] = useState(result.dimensions || []);
+  const [dimensions, setDimensions] = useState(() => 
+    (result.dimensions || []).map(d => ({ ...d, offsetX: 4, offsetY: -4 }))
+  );
   const [isAddingBalloon, setIsAddingBalloon] = useState(false);
   const [newBalloonValue, setNewBalloonValue] = useState('');
   const [showCMMImport, setShowCMMImport] = useState(false);
   const [cmmResults, setCmmResults] = useState({});
+  const [draggedBalloon, setDraggedBalloon] = useState(null);
   const containerRef = useRef(null);
   const imageRef = useRef(null);
   
@@ -416,14 +520,12 @@ function BlueprintViewer({ result, onReset, token }) {
       const balloonRadius = Math.max(24, 20 * scale);
       const fontSize = Math.max(16, 14 * scale);
       const lineWidth = Math.max(3, 2 * scale);
-      const offsetX = 50 * scale;
-      const offsetY = 45 * scale;
       
       dimensions.forEach(dim => {
         const centerX = ((dim.bounding_box.xmin + dim.bounding_box.xmax) / 2 / 1000) * canvas.width;
         const centerY = ((dim.bounding_box.ymin + dim.bounding_box.ymax) / 2 / 1000) * canvas.height;
-        const balloonX = centerX + offsetX;
-        const balloonY = centerY - offsetY;
+        const balloonX = centerX + (dim.offsetX || 4) * 10 * scale;
+        const balloonY = centerY + (dim.offsetY || -4) * 10 * scale;
         
         ctx.beginPath(); ctx.moveTo(centerX, centerY); ctx.lineTo(balloonX, balloonY); ctx.strokeStyle = '#E63946'; ctx.lineWidth = lineWidth; ctx.stroke();
         ctx.beginPath(); ctx.arc(centerX, centerY, Math.max(3, 2 * scale), 0, Math.PI * 2); ctx.fillStyle = '#E63946'; ctx.fill();
@@ -448,6 +550,7 @@ function BlueprintViewer({ result, onReset, token }) {
   const handleDeleteDimension = (id) => { setDimensions(prev => prev.filter(d => d.id !== id)); };
 
   const handleImageClick = (e) => {
+    if (draggedBalloon) return;
     if (!isAddingBalloon || !newBalloonValue.trim()) return;
     const rect = containerRef.current.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 1000;
@@ -458,9 +561,15 @@ function BlueprintViewer({ result, onReset, token }) {
     const rows = ["4", "3", "2", "1"];
     const zone = `${columns[Math.min(colIndex, 7)]}${rows[Math.min(rowIndex, 3)]}`;
     const newId = dimensions.length > 0 ? Math.max(...dimensions.map(d => d.id)) + 1 : 1;
-    setDimensions(prev => [...prev, { id: newId, value: newBalloonValue.trim(), zone, bounding_box: { xmin: x - 20, xmax: x + 20, ymin: y - 10, ymax: y + 10 } }]);
+    setDimensions(prev => [...prev, { id: newId, value: newBalloonValue.trim(), zone, bounding_box: { xmin: x - 20, xmax: x + 20, ymin: y - 10, ymax: y + 10 }, offsetX: 4, offsetY: -4 }]);
     setNewBalloonValue('');
     setIsAddingBalloon(false);
+  };
+
+  const handleBalloonDrag = (id, deltaX, deltaY) => {
+    setDimensions(prev => prev.map(d => 
+      d.id === id ? { ...d, offsetX: (d.offsetX || 4) + deltaX, offsetY: (d.offsetY || -4) + deltaY } : d
+    ));
   };
 
   const handleCMMImport = (results) => { setCmmResults(results); setShowCMMImport(false); };
@@ -507,21 +616,31 @@ function BlueprintViewer({ result, onReset, token }) {
         </div>
       </div>
 
+      <div className="bg-[#1a1a1a] rounded-lg px-3 py-2 text-sm text-gray-400 flex items-center gap-2">
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+        <span>Tip: Drag balloons to reposition them. The leader line follows automatically.</span>
+      </div>
+
       <div ref={containerRef} className={`relative bg-[#0a0a0a] rounded-xl overflow-hidden ${isAddingBalloon ? 'cursor-crosshair' : ''}`} style={{ minHeight: '500px' }} onClick={handleImageClick}>
         {result.image && <img ref={imageRef} src={result.image} alt="Blueprint" className="w-full h-auto" crossOrigin="anonymous" />}
         <svg className="absolute inset-0 w-full h-full pointer-events-none">
           {dimensions.map((dim) => {
             const centerX = (dim.bounding_box.xmin + dim.bounding_box.xmax) / 2 / 10;
             const centerY = (dim.bounding_box.ymin + dim.bounding_box.ymax) / 2 / 10;
-            const balloonX = centerX + 4;
-            const balloonY = Math.max(4, centerY - 4);
-            return (<g key={`leader-${dim.id}`}><line x1={`${centerX}%`} y1={`${centerY}%`} x2={`${balloonX}%`} y2={`${balloonY}%`} stroke="#E63946" strokeWidth="2" /><circle cx={`${centerX}%`} cy={`${centerY}%`} r="2" fill="#E63946" /></g>);
+            const balloonX = centerX + (dim.offsetX || 4);
+            const balloonY = centerY + (dim.offsetY || -4);
+            return (
+              <g key={`leader-${dim.id}`}>
+                <line x1={`${centerX}%`} y1={`${centerY}%`} x2={`${balloonX}%`} y2={`${balloonY}%`} stroke="#E63946" strokeWidth="2" />
+                <circle cx={`${centerX}%`} cy={`${centerY}%`} r="3" fill="#E63946" />
+              </g>
+            );
           })}
         </svg>
         {dimensions.map((dim) => {
           const centerX = (dim.bounding_box.xmin + dim.bounding_box.xmax) / 2 / 10;
           const centerY = (dim.bounding_box.ymin + dim.bounding_box.ymax) / 2 / 10;
-          return <Balloon key={dim.id} dimension={dim} left={centerX + 4} top={Math.max(4, centerY - 4)} onDelete={() => handleDeleteDimension(dim.id)} cmmResult={cmmResults[dim.id]} />;
+          return <DraggableBalloon key={dim.id} dimension={dim} left={centerX + (dim.offsetX || 4)} top={centerY + (dim.offsetY || -4)} onDelete={() => handleDeleteDimension(dim.id)} onDrag={handleBalloonDrag} cmmResult={cmmResults[dim.id]} containerRef={containerRef} />;
         })}
         {isAddingBalloon && <div className="absolute inset-0 bg-black/30 flex items-center justify-center pointer-events-none"><span className="bg-[#E63946] text-white px-4 py-2 rounded-lg text-sm">Click to place balloon</span></div>}
       </div>
@@ -547,6 +666,63 @@ function BlueprintViewer({ result, onReset, token }) {
           {dimensions.length === 0 && <div className="px-4 py-8 text-center text-gray-500">No dimensions detected.</div>}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ============ DRAGGABLE BALLOON ============
+function DraggableBalloon({ dimension, left, top, onDelete, onDrag, cmmResult, containerRef }) {
+  const [isHovered, setIsHovered] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const startPos = useRef({ x: 0, y: 0 });
+  const hasResult = cmmResult?.actual;
+  const isPassing = cmmResult?.status === 'PASS';
+
+  const handleMouseDown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+    startPos.current = { x: e.clientX, y: e.clientY };
+    
+    const handleMouseMove = (e) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const deltaX = ((e.clientX - startPos.current.x) / rect.width) * 100;
+      const deltaY = ((e.clientY - startPos.current.y) / rect.height) * 100;
+      startPos.current = { x: e.clientX, y: e.clientY };
+      onDrag(dimension.id, deltaX, deltaY);
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  return (
+    <div
+      className={`absolute transform -translate-x-1/2 -translate-y-1/2 ${isDragging ? 'cursor-grabbing z-50' : 'cursor-grab'}`}
+      style={{ left: `${left}%`, top: `${top}%` }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onMouseDown={handleMouseDown}
+    >
+      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-all shadow-lg ${hasResult ? (isPassing ? 'bg-green-500 text-white border-2 border-green-400' : 'bg-red-500 text-white border-2 border-red-400') : (isHovered || isDragging ? 'bg-[#E63946] text-white scale-110' : 'bg-white text-[#E63946] border-2 border-[#E63946]')}`}>
+        {dimension.id}
+      </div>
+      {isHovered && !isDragging && (
+        <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-[#161616] border border-[#2a2a2a] rounded-lg px-3 py-2 whitespace-nowrap z-10 shadow-xl">
+          <div className="text-white font-mono text-sm">{dimension.value}</div>
+          {dimension.zone && <div className="text-gray-400 text-xs">Zone: {dimension.zone}</div>}
+          {cmmResult?.actual && <div className="text-blue-400 text-xs mt-1">Actual: {cmmResult.actual}</div>}
+          {cmmResult?.status && <div className={`text-xs ${cmmResult.status === 'PASS' ? 'text-green-400' : 'text-red-400'}`}>{cmmResult.status}</div>}
+          <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="text-red-500 text-xs hover:underline mt-1">Delete</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -640,30 +816,6 @@ function CMMImportModal({ dimensions, onClose, onImport }) {
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-// ============ BALLOON ============
-function Balloon({ dimension, left, top, onDelete, cmmResult }) {
-  const [isHovered, setIsHovered] = useState(false);
-  const hasResult = cmmResult?.actual;
-  const isPassing = cmmResult?.status === 'PASS';
-  
-  return (
-    <div className="absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer" style={{ left: `${left}%`, top: `${top}%` }} onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
-      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-all shadow-lg ${hasResult ? (isPassing ? 'bg-green-500 text-white border-2 border-green-400' : 'bg-red-500 text-white border-2 border-red-400') : (isHovered ? 'bg-[#E63946] text-white scale-110' : 'bg-white text-[#E63946] border-2 border-[#E63946]')}`}>
-        {dimension.id}
-      </div>
-      {isHovered && (
-        <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-[#161616] border border-[#2a2a2a] rounded-lg px-3 py-2 whitespace-nowrap z-10 shadow-xl">
-          <div className="text-white font-mono text-sm">{dimension.value}</div>
-          {dimension.zone && <div className="text-gray-400 text-xs">Zone: {dimension.zone}</div>}
-          {cmmResult?.actual && <div className="text-blue-400 text-xs mt-1">Actual: {cmmResult.actual}</div>}
-          {cmmResult?.status && <div className={`text-xs ${cmmResult.status === 'PASS' ? 'text-green-400' : 'text-red-400'}`}>{cmmResult.status}</div>}
-          <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="text-red-500 text-xs hover:underline mt-1">Delete</button>
-        </div>
-      )}
     </div>
   );
 }
