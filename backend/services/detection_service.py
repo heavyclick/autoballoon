@@ -7,11 +7,6 @@ Strategy:
 2. Gemini identifies which text values are dimensions (semantic filtering)
 3. This service matches Gemini's dimension list against OCR results
 4. Output: Only dimensions, with precise bounding boxes from OCR
-
-FIXED: Matches core numeric values to handle modifiers like (2x), C/C, REF
-- Gemini returns: "35 C/C" 
-- OCR detects: "35" (separate from "C/C")
-- We match on "35", but return "35 C/C" with OCR's bounding box for "35"
 """
 import re
 from typing import Optional
@@ -147,7 +142,7 @@ class DetectionService:
                 
                 matched.append(Dimension(
                     id=0,  # Will be assigned later
-                    value=dim_value,  # Use Gemini's value (includes modifiers like C/C, 2x)
+                    value=dim_value,  # Use Gemini's value (may include symbols)
                     zone=None,  # Will be assigned by grid service
                     bounding_box=BoundingBox(**ocr_detection.bounding_box),
                     confidence=combined_confidence
@@ -160,35 +155,6 @@ class DetectionService:
         
         return matched
     
-    def _extract_core_number(self, text: str) -> Optional[str]:
-        """
-        Extract the core numeric value from a dimension string.
-        This is the primary number we'll use for matching against OCR.
-        
-        Examples:
-            "35 C/C" -> "35"
-            "Ø3.4 (2x)" -> "3.4"
-            "Ø7.5 (2x)" -> "7.5"
-            "0.95 REF" -> "0.95"
-            "89.5°" -> "89.5"
-            "M8×1.25" -> "8"
-            "R5 TYP" -> "5"
-            "2×.5 (2x)" -> "2"
-        """
-        # Remove common prefixes
-        cleaned = text
-        cleaned = re.sub(r'^[ØøΦφ⌀]', '', cleaned)  # Diameter symbols
-        cleaned = re.sub(r'^R', '', cleaned)  # Radius
-        cleaned = re.sub(r'^M', '', cleaned)  # Metric thread
-        cleaned = re.sub(r'^C', '', cleaned)  # Chamfer
-        
-        # Find all numbers (including decimals)
-        numbers = re.findall(r'\d+\.?\d*', cleaned)
-        
-        if numbers:
-            return numbers[0]
-        return None
-    
     def _find_best_ocr_match(
         self,
         dimension_value: str,
@@ -198,73 +164,37 @@ class DetectionService:
         """
         Find the OCR detection that best matches the dimension value.
         
-        STRATEGY:
-        1. Extract core number from Gemini's dimension (e.g., "35 C/C" -> "35")
-        2. Find OCR detection containing that core number
-        3. Return OCR's bounding box, but we'll use Gemini's full value
-        
         Returns tuple of (OCRDetection, match_confidence) or None.
         """
-        # Extract core number for matching
-        core_number = self._extract_core_number(dimension_value)
+        # Normalize the dimension value for matching
         normalized_dim = self._normalize_for_matching(dimension_value)
         
         best_match = None
         best_score = 0.0
         
-        # === PASS 1: Exact full match (ideal case) ===
         for ocr in ocr_detections:
             if id(ocr) in used_indices:
                 continue
             
             normalized_ocr = self._normalize_for_matching(ocr.text)
             
+            # Try exact match first
             if normalized_dim == normalized_ocr:
                 return (ocr, 1.0)
-        
-        # === PASS 2: Core number exact match ===
-        # This handles cases like Gemini="35 C/C", OCR="35"
-        if core_number:
-            for ocr in ocr_detections:
-                if id(ocr) in used_indices:
-                    continue
-                
-                ocr_core = self._extract_core_number(ocr.text)
-                
-                # Exact core number match
-                if ocr_core and ocr_core == core_number:
-                    # Verify OCR text looks like a dimension (has the number prominently)
-                    # Avoid matching "A3" when looking for "3"
-                    normalized_ocr = self._normalize_for_matching(ocr.text)
-                    if core_number in normalized_ocr:
-                        return (ocr, 0.95)
-        
-        # === PASS 3: Containment match ===
-        for ocr in ocr_detections:
-            if id(ocr) in used_indices:
-                continue
             
-            normalized_ocr = self._normalize_for_matching(ocr.text)
-            
-            # Check if one contains the other
+            # Try containment (OCR text contains dimension or vice versa)
             if normalized_dim in normalized_ocr or normalized_ocr in normalized_dim:
                 score = min(len(normalized_dim), len(normalized_ocr)) / max(len(normalized_dim), len(normalized_ocr))
                 if score > best_score:
                     best_score = score
                     best_match = ocr
-        
-        # === PASS 4: Fuzzy match (last resort) ===
-        if not best_match or best_score < 0.7:
-            for ocr in ocr_detections:
-                if id(ocr) in used_indices:
-                    continue
-                
-                normalized_ocr = self._normalize_for_matching(ocr.text)
-                
-                score = self._fuzzy_match_score(normalized_dim, normalized_ocr)
-                if score > best_score and score > 0.7:
-                    best_score = score
-                    best_match = ocr
+                continue
+            
+            # Fuzzy match for OCR errors
+            score = self._fuzzy_match_score(normalized_dim, normalized_ocr)
+            if score > best_score and score > 0.7:  # Minimum threshold
+                best_score = score
+                best_match = ocr
         
         if best_match:
             return (best_match, best_score)
