@@ -722,13 +722,13 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
       
       dimensions.forEach(dim => {
         const anchorX = (dim.anchorX / 100) * canvas.width;
-        const anchorY = (dim.anchorY / 100) * canvas.height;
+        const anchorY = (dim.anchorY / 100) * canvas.height - (canvas.height * 0.008); // Offset up
         const balloonX = (dim.balloonX / 100) * canvas.width;
         const balloonY = (dim.balloonY / 100) * canvas.height;
         
         ctx.beginPath(); ctx.moveTo(anchorX, anchorY); ctx.lineTo(balloonX, balloonY);
         ctx.strokeStyle = '#E63946'; ctx.lineWidth = lineWidth; ctx.stroke();
-        ctx.beginPath(); ctx.arc(anchorX, anchorY, Math.max(4, lineWidth * 1.5), 0, Math.PI * 2);
+        ctx.beginPath(); ctx.arc(anchorX, anchorY, Math.max(2.5, lineWidth * 0.8), 0, Math.PI * 2);
         ctx.fillStyle = '#E63946'; ctx.fill();
         ctx.beginPath(); ctx.arc(balloonX, balloonY, balloonRadius, 0, Math.PI * 2);
         ctx.fillStyle = 'white'; ctx.fill(); ctx.strokeStyle = '#E63946'; ctx.lineWidth = lineWidth; ctx.stroke();
@@ -876,8 +876,8 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
         <svg className="absolute inset-0 w-full h-full pointer-events-none">
           {dimensions.map((dim) => (
             <g key={`leader-${dim.id}`}>
-              <line x1={`${dim.anchorX}%`} y1={`${dim.anchorY}%`} x2={`${dim.balloonX}%`} y2={`${dim.balloonY}%`} stroke="#E63946" strokeWidth="2" />
-              <circle cx={`${dim.anchorX}%`} cy={`${dim.anchorY}%`} r="4" fill="#E63946" />
+              <line x1={`${dim.anchorX}%`} y1={`${dim.anchorY - 0.8}%`} x2={`${dim.balloonX}%`} y2={`${dim.balloonY}%`} stroke="#E63946" strokeWidth="2" />
+              <circle cx={`${dim.anchorX}%`} cy={`${dim.anchorY - 0.8}%`} r="2.5" fill="#E63946" />
             </g>
           ))}
         </svg>
