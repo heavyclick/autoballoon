@@ -34,7 +34,26 @@ export function GlassWallPaywall({
 
   // Use session data if available
   const dims = dimensionCount || sessionData?.dimensionCount || 0;
-  const hours = estimatedHours || sessionData?.estimatedManualHours || (dims * 1 / 60).toFixed(1);
+  
+  // Calculate time saved - 1 minute per dimension + 10 min setup
+  const rawMinutes = (dims * 1) + 10;
+  const rawHours = rawMinutes / 60;
+  
+  // Format the time nicely
+  const formatTimeSaved = () => {
+    if (rawMinutes < 60) {
+      return `${Math.round(rawMinutes)} minutes`;
+    } else if (rawHours < 2) {
+      const hrs = Math.floor(rawHours);
+      const mins = Math.round((rawHours - hrs) * 60);
+      return mins > 0 ? `${hrs}h ${mins}m` : `${hrs} hour`;
+    } else {
+      return `${rawHours.toFixed(1)} hours`;
+    }
+  };
+  
+  const timeSavedDisplay = formatTimeSaved();
+  const timeSavedShort = rawMinutes < 60 ? `~${Math.round(rawMinutes)}m` : `~${rawHours.toFixed(1)}h`;
   const seconds = processingSeconds || 12;
 
   const handleProceedToCheckout = async (plan) => {
@@ -135,7 +154,7 @@ export function GlassWallPaywall({
                 <div className="text-gray-500 text-sm">Grid Zones Mapped</div>
               </div>
               <div className="bg-[#0d0d0d] rounded-xl p-4 border border-[#2a2a2a]">
-                <div className="text-3xl font-bold text-amber-400 mb-1">~{hours}h</div>
+                <div className="text-3xl font-bold text-amber-400 mb-1">{timeSavedShort}</div>
                 <div className="text-gray-500 text-sm">Manual Time Saved</div>
               </div>
               <div className="bg-[#0d0d0d] rounded-xl p-4 border border-[#2a2a2a]">
@@ -147,7 +166,7 @@ export function GlassWallPaywall({
             {/* Value proposition */}
             <p className="text-gray-400 mb-6">
               Your <span className="text-white font-medium">AS9102 Form 3</span> is ready. 
-              To download this file and save <span className="text-amber-400 font-medium">{hours} hours</span> of 
+              To download this file and save <span className="text-amber-400 font-medium">{timeSavedDisplay}</span> of 
               work, select a plan below.
             </p>
 
@@ -274,10 +293,10 @@ export function GlassWallPaywall({
                 }`}
                 onClick={() => setSelectedPlan('pro_monthly')}
               >
-                {/* Best Value Badge */}
+                {/* Early Adopter Badge */}
                 <div className="absolute -top-3 left-4">
                   <span className="bg-[#E63946] text-white text-xs font-bold px-3 py-1 rounded-full">
-                    BEST VALUE
+                    EARLY ADOPTER - 50% OFF
                   </span>
                 </div>
                 
@@ -287,7 +306,10 @@ export function GlassWallPaywall({
                     <p className="text-gray-500 text-sm">For professionals</p>
                   </div>
                   <div className="text-right">
-                    <div className="text-2xl font-bold text-white">$99</div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-gray-500 text-lg line-through">$199</span>
+                      <span className="text-2xl font-bold text-white">$99</span>
+                    </div>
                     <div className="text-gray-500 text-xs">/month</div>
                   </div>
                 </div>
