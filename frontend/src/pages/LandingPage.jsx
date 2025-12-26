@@ -4,7 +4,7 @@
  * Users can always upload and process; paywall shows at export
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Navbar } from '../components/Navbar';
 import { HowItWorks } from '../components/HowItWorks';
@@ -12,13 +12,53 @@ import { PricingCard } from '../components/PricingCard';
 import { FAQ } from '../components/FAQ';
 import { Footer } from '../components/Footer';
 import { DropZone } from '../components/DropZone';
+import { PromoRedemption, usePromoCode } from '../components/PromoRedemption';
+import { API_BASE_URL } from '../constants/config';
 
 export function LandingPage() {
   const { isPro } = useAuth();
+  const { promoCode, clearPromo } = usePromoCode();
+  const [hasAccess, setHasAccess] = useState(false);
+  const [userEmail, setUserEmail] = useState('');
+
+  // Check if user has access on page load
+  useEffect(() => {
+    const checkExistingAccess = async () => {
+      const email = localStorage.getItem('autoballoon_user_email');
+      if (email) {
+        setUserEmail(email);
+        try {
+          const response = await fetch(`${API_BASE_URL}/access/check?email=${encodeURIComponent(email)}`);
+          const data = await response.json();
+          if (data.has_access) {
+            setHasAccess(true);
+          }
+        } catch (err) {
+          console.error('Access check error:', err);
+        }
+      }
+    };
+    checkExistingAccess();
+  }, []);
+
+  const handlePromoSuccess = (email) => {
+    setUserEmail(email);
+    setHasAccess(true);
+    clearPromo();
+  };
 
   return (
     <div className="min-h-screen bg-[#0d0d0d] text-white">
       <Navbar />
+      
+      {/* Promo Code Modal - Shows when ?promo=LINKEDIN24 in URL */}
+      {promoCode && (
+        <PromoRedemption 
+          promoCode={promoCode}
+          onSuccess={handlePromoSuccess}
+          onClose={clearPromo}
+        />
+      )}
       
       {/* Hero Section */}
       <section className="pt-24 pb-8 px-4">
@@ -43,6 +83,16 @@ export function LandingPage() {
             AI-powered dimension detection for First Article Inspection.
           </p>
 
+          {/* Access Status Indicator */}
+          {hasAccess && (
+            <div className="inline-flex items-center gap-2 text-sm mb-8 bg-green-500/10 border border-green-500/30 px-4 py-2 rounded-full">
+              <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              <span className="text-green-400">Free access activated for {userEmail}</span>
+            </div>
+          )}
+
           {/* Pro indicator - only show for pro users */}
           {isPro && (
             <div className="inline-flex items-center gap-2 text-sm mb-8">
@@ -59,8 +109,8 @@ export function LandingPage() {
       <section className="px-4 pb-16">
         <div className="max-w-5xl mx-auto">
           <div className="bg-[#161616] border border-[#2a2a2a] rounded-2xl p-6 md:p-8">
-            {/* No onBeforeProcess - Glass Wall doesn't block uploads */}
-            <DropZone />
+            {/* Pass hasAccess so DropZone knows if user can download */}
+            <DropZone hasPromoAccess={hasAccess} userEmail={userEmail} />
             
             {/* Encouragement text for non-pro users */}
             {!isPro && (
