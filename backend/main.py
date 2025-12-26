@@ -81,19 +81,8 @@ async def redeem_promo(request: Request):
     Backend grants 24h access and returns success
     """
     try:
-        # Try to import database - adjust this based on your setup
-        try:
-            from database import database
-        except ImportError:
-            try:
-                from db import database
-            except ImportError:
-                # If no database module, use a simple in-memory store for testing
-                print("WARNING: No database module found, using in-memory store")
-                return JSONResponse({
-                    "success": False, 
-                    "message": "Database not configured. Please contact support."
-                }, status_code=500)
+        from database_service import get_db
+        db = get_db()
         
         data = await request.json()
         email = data.get("email", "").lower().strip()
@@ -109,37 +98,32 @@ async def redeem_promo(request: Request):
             return JSONResponse({"success": False, "message": "Invalid promo code"}, status_code=400)
         
         promo = VALID_PROMO_CODES[code]
-        expires_at = datetime.utcnow() + timedelta(hours=promo["hours"])
+        expires_at = (datetime.utcnow() + timedelta(hours=promo["hours"])).isoformat()
         
-        # Check if already redeemed
-        existing = await database.fetch_one(
-            "SELECT id FROM access_passes WHERE email = :email AND pass_type = :pass_type",
-            {"email": email, "pass_type": promo["type"]}
-        )
+        # Check if already redeemed using Supabase client
+        existing = db.table("access_passes").select("id").eq("email", email).eq("pass_type", promo["type"]).execute()
         
-        if existing:
+        if existing.data and len(existing.data) > 0:
             return JSONResponse({
                 "success": False, 
                 "message": "You've already used this promo code"
             }, status_code=400)
         
-        # Grant access!
-        await database.execute("""
-            INSERT INTO access_passes (email, pass_type, granted_by, expires_at, is_active, created_at)
-            VALUES (:email, :pass_type, :granted_by, :expires_at, true, NOW())
-        """, {
+        # Grant access using Supabase client
+        result = db.table("access_passes").insert({
             "email": email,
             "pass_type": promo["type"],
             "granted_by": f"promo_{code}",
-            "expires_at": expires_at
-        })
+            "expires_at": expires_at,
+            "is_active": True
+        }).execute()
         
-        print(f"Promo redeemed successfully for {email}")
+        print(f"Promo redeemed successfully for {email}: {result}")
         
         return {
             "success": True,
             "message": f"Success! You have {promo['hours']} hours of free access.",
-            "expires_at": expires_at.isoformat(),
+            "expires_at": expires_at,
             "hours": promo["hours"]
         }
         
@@ -160,29 +144,26 @@ async def check_access(email: str = ""):
         return {"has_access": False}
     
     try:
-        try:
-            from database import database
-        except ImportError:
-            try:
-                from db import database
-            except ImportError:
-                return {"has_access": False, "error": "Database not configured"}
+        from database_service import get_db
+        db = get_db()
         
         email = email.lower().strip()
         
-        result = await database.fetch_one("""
-            SELECT pass_type, expires_at, granted_by
-            FROM access_passes
-            WHERE email = :email AND is_active = true
-              AND (expires_at IS NULL OR expires_at > NOW())
-            ORDER BY created_at DESC LIMIT 1
-        """, {"email": email})
+        # Query using Supabase client
+        result = db.table("access_passes").select("pass_type, expires_at, granted_by").eq("email", email).eq("is_active", True).order("created_at", desc=True).limit(1).execute()
         
-        if result:
+        if result.data and len(result.data) > 0:
+            row = result.data[0]
+            # Check if not expired
+            if row.get("expires_at"):
+                expires = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+                if expires < datetime.now(expires.tzinfo):
+                    return {"has_access": False, "reason": "expired"}
+            
             return {
                 "has_access": True,
-                "access_type": result["pass_type"],
-                "expires_at": result["expires_at"].isoformat() if result["expires_at"] else None,
+                "access_type": row["pass_type"],
+                "expires_at": row["expires_at"],
             }
         
         return {"has_access": False}
