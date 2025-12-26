@@ -80,23 +80,37 @@ async def redeem_promo(request: Request):
     Frontend sends: {"email": "user@example.com", "promo_code": "LINKEDIN24"}
     Backend grants 24h access and returns success
     """
-    from database import database  # Import your database connection
-    
-    data = await request.json()
-    email = data.get("email", "").lower().strip()
-    code = data.get("promo_code", "").upper().strip()
-    
-    # Validate
-    if not email or "@" not in email:
-        return JSONResponse({"success": False, "message": "Invalid email"}, status_code=400)
-    
-    if code not in VALID_PROMO_CODES:
-        return JSONResponse({"success": False, "message": "Invalid promo code"}, status_code=400)
-    
-    promo = VALID_PROMO_CODES[code]
-    expires_at = datetime.utcnow() + timedelta(hours=promo["hours"])
-    
     try:
+        # Try to import database - adjust this based on your setup
+        try:
+            from database import database
+        except ImportError:
+            try:
+                from db import database
+            except ImportError:
+                # If no database module, use a simple in-memory store for testing
+                print("WARNING: No database module found, using in-memory store")
+                return JSONResponse({
+                    "success": False, 
+                    "message": "Database not configured. Please contact support."
+                }, status_code=500)
+        
+        data = await request.json()
+        email = data.get("email", "").lower().strip()
+        code = data.get("promo_code", "").upper().strip()
+        
+        print(f"Promo redeem attempt: email={email}, code={code}")
+        
+        # Validate
+        if not email or "@" not in email:
+            return JSONResponse({"success": False, "message": "Invalid email"}, status_code=400)
+        
+        if code not in VALID_PROMO_CODES:
+            return JSONResponse({"success": False, "message": "Invalid promo code"}, status_code=400)
+        
+        promo = VALID_PROMO_CODES[code]
+        expires_at = datetime.utcnow() + timedelta(hours=promo["hours"])
+        
         # Check if already redeemed
         existing = await database.fetch_one(
             "SELECT id FROM access_passes WHERE email = :email AND pass_type = :pass_type",
@@ -120,6 +134,8 @@ async def redeem_promo(request: Request):
             "expires_at": expires_at
         })
         
+        print(f"Promo redeemed successfully for {email}")
+        
         return {
             "success": True,
             "message": f"Success! You have {promo['hours']} hours of free access.",
@@ -128,8 +144,10 @@ async def redeem_promo(request: Request):
         }
         
     except Exception as e:
-        print(f"Promo error: {e}")
-        return JSONResponse({"success": False, "message": "Server error"}, status_code=500)
+        print(f"Promo error: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"success": False, "message": f"Server error: {str(e)}"}, status_code=500)
 
 
 @app.get("/api/access/check")
@@ -138,14 +156,20 @@ async def check_access(email: str = ""):
     Frontend calls: GET /api/access/check?email=user@example.com
     Returns: {"has_access": true/false, "expires_at": "...", ...}
     """
-    from database import database
-    
     if not email:
         return {"has_access": False}
     
-    email = email.lower().strip()
-    
     try:
+        try:
+            from database import database
+        except ImportError:
+            try:
+                from db import database
+            except ImportError:
+                return {"has_access": False, "error": "Database not configured"}
+        
+        email = email.lower().strip()
+        
         result = await database.fetch_one("""
             SELECT pass_type, expires_at, granted_by
             FROM access_passes
@@ -164,8 +188,8 @@ async def check_access(email: str = ""):
         return {"has_access": False}
         
     except Exception as e:
-        print(f"Access check error: {e}")
-        return {"has_access": False}
+        print(f"Access check error: {type(e).__name__}: {e}")
+        return {"has_access": False, "error": str(e)}
 
 
 # =============================================================================
