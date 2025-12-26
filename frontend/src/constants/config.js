@@ -7,6 +7,10 @@
 // API Configuration
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://autoballoon-production.up.railway.app';
 
+// File Upload Configuration
+export const MAX_FILE_SIZE_MB = 50;
+export const ALLOWED_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg', '.tif', '.tiff'];
+
 // Pricing - New Glass Wall pricing
 export const PRICE_PASS_24H = 49;
 export const PRICE_PRO_MONTHLY = 99;
