@@ -110,7 +110,7 @@ export function DropZone({ onBeforeProcess, hasPromoAccess = false, userEmail = 
     return result.dimensions?.length || 0;
   };
 
-  if (showRevisionCompare) return <RevisionCompare onClose={() => setShowRevisionCompare(false)} onComplete={handleRevisionCompareResult} visitorId={visitorId} incrementUsage={incrementUsage} isPro={isPro} onShowGlassWall={() => setShowGlassWall(true)} />;
+  if (showRevisionCompare) return <RevisionCompare onClose={() => setShowRevisionCompare(false)} onComplete={handleRevisionCompareResult} visitorId={visitorId} incrementUsage={incrementUsage} isPro={canDownload} onShowGlassWall={() => setShowGlassWall(true)} />;
   
   if (result) return (
     <>
