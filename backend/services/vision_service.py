@@ -3,8 +3,8 @@ Vision Service
 Integrates with Gemini Vision API for semantic understanding of manufacturing drawings.
 Used to identify which text elements are dimensions vs. labels, notes, part numbers, etc.
 
-ENHANCED: Prompt updated to capture ALL dimension modifiers for AS9102/ISO 13485 compliance
-while keeping the rest of the code exactly the same.
+ENHANCED: Prompt updated to capture ALL dimension modifiers AND thread specifications
+for AS9102/ISO 13485 compliance.
 """
 import base64
 import json
@@ -102,11 +102,26 @@ class VisionService:
         Build the prompt for dimension identification.
         
         ENHANCED for AS9102 First Article Inspection and ISO 13485 Medical Device compliance.
-        Captures ALL dimension modifiers that are critical for inspection documentation.
+        Captures ALL dimension modifiers AND thread specifications that are critical for inspection documentation.
         """
         return """You are an expert manufacturing engineer with 20+ years of experience reading technical drawings for AS9102 First Article Inspection (aerospace) and ISO 13485 (medical device) documentation.
 
-Your task is to extract ALL dimensions from this drawing with their COMPLETE values INCLUDING all modifiers.
+Your task is to extract ALL dimensions AND thread specifications from this drawing with their COMPLETE values INCLUDING all modifiers.
+
+## CRITICAL: THREAD SPECIFICATIONS (must be extracted!)
+
+### STANDARD INCH THREADS (UTS/Unified Thread Standard):
+- "6-32", "8-32", "10-24", "10-32", "1/4-20", "5/16-18", "3/8-16", "1/2-13"
+- With class: "1/4-20 UNC", "6-32 UNC-2B", "10-32 UNF"
+- With "Thread" suffix: "6-32 Thread", "8-32 THD"
+- Context phrases: "For 8-32", "For 6-32 Mounting Fastener", "Tap 1/4-20"
+
+### METRIC THREADS:
+- "M3x0.5", "M4x0.7", "M5x0.8", "M6x1.0", "M8x1.25", "M10x1.5"
+- With class: "M6x1.0 6H", "M8x1.25-6g"
+
+### PIPE THREADS:
+- "1/4-18 NPT", "1/8-27 NPT", "3/8 NPTF", "1/2 BSPT"
 
 ## CRITICAL: Always include these modifiers as part of the dimension value
 
@@ -137,30 +152,26 @@ Your task is to extract ALL dimensions from this drawing with their COMPLETE val
 - "CSINK", "C'SINK", "⌵" - e.g., "Ø3 CSINK 90°"
 - "THRU", "THROUGH" - e.g., "Ø6 THRU" NOT "Ø6"
 
-### THREAD SPECIFICATIONS:
-- Full thread callouts - e.g., "M8×1.25 (4x)" NOT "M8"
-- "TAP", "TAPPED" - e.g., "M6 TAP ↧15"
-- Class/fit - e.g., "1/4-20 UNC-2B"
-
 ### SURFACE/FINISH:
 - "BOTH SIDES", "2 SURFACES" - e.g., "0.8 BOTH SIDES"
 - "FAR SIDE", "NEAR SIDE"
 
 ## EXAMPLES - CORRECT vs WRONG:
 
-✓ CORRECT: "35 C/C"           ✗ WRONG: "35"
-✓ CORRECT: "Ø3.4 (2x)"        ✗ WRONG: "Ø3.4"  
-✓ CORRECT: "Ø7.5 (2x)"        ✗ WRONG: "Ø7.5"
-✓ CORRECT: "0.95 REF"         ✗ WRONG: "0.95"
-✓ CORRECT: "89.5°"            ✗ WRONG: "89.5"
-✓ CORRECT: "R5 TYP"           ✗ WRONG: "R5"
-✓ CORRECT: "M8×1.25 (4x)"     ✗ WRONG: "M8×1.25" or "M8"
-✓ CORRECT: "Ø44 B.C."         ✗ WRONG: "Ø44"
-✓ CORRECT: "15.3 +0.1/-0"     ✗ WRONG: "15.3"
-✓ CORRECT: "25 MAX"           ✗ WRONG: "25"
-✓ CORRECT: "Ø6 THRU"          ✗ WRONG: "Ø6"
-✓ CORRECT: "2×.5 (2x)"        ✗ WRONG: "2×.5"
-✓ CORRECT: "10 ±0.5 (4x)"     ✗ WRONG: "10 ±0.5"
+✓ CORRECT: "6-32 Thread"       ✗ WRONG: (not extracted)
+✓ CORRECT: "For 8-32 Mounting Fastener" ✗ WRONG: (not extracted)
+✓ CORRECT: "M8x1.25 (4x)"      ✗ WRONG: "M8x1.25" or "M8"
+✓ CORRECT: "1/4-20 UNC"        ✗ WRONG: (not extracted)
+✓ CORRECT: "35 C/C"            ✗ WRONG: "35"
+✓ CORRECT: "Ø3.4 (2x)"         ✗ WRONG: "Ø3.4"  
+✓ CORRECT: "Ø7.5 (2x)"         ✗ WRONG: "Ø7.5"
+✓ CORRECT: "0.95 REF"          ✗ WRONG: "0.95"
+✓ CORRECT: "89.5°"             ✗ WRONG: "89.5"
+✓ CORRECT: "R5 TYP"            ✗ WRONG: "R5"
+✓ CORRECT: "Ø44 B.C."          ✗ WRONG: "Ø44"
+✓ CORRECT: "15.3 +0.1/-0"      ✗ WRONG: "15.3"
+✓ CORRECT: "25 MAX"            ✗ WRONG: "25"
+✓ CORRECT: "Ø6 THRU"           ✗ WRONG: "Ø6"
 
 ## WHAT TO EXTRACT:
 - Linear dimensions with ALL modifiers
@@ -168,16 +179,17 @@ Your task is to extract ALL dimensions from this drawing with their COMPLETE val
 - Radii (R) with TYP or quantity markers
 - Angles (°) with BSC or quantity markers
 - Tolerances (±, +/-)
-- Thread callouts with quantity
+- **ALL thread callouts** (6-32, M8x1.25, 1/4-20, etc.) - VERY IMPORTANT!
+- Thread notes like "For 8-32" or "Tap 1/4-20"
 - Chamfers (C, ×45°)
 - All reference and limit dimensions
 
 ## WHAT TO IGNORE (not dimensions):
-- Part numbers (e.g., "PN-12345", "F15848")
+- Part numbers (e.g., "PN-12345", "F15848", "5236A18")
 - Revision letters (e.g., "REV A", "REV B")
 - Drawing numbers
 - Scale indicators (e.g., "SCALE 2:1", "2:1 (1:1)")
-- Company names and logos (e.g., "LEDiL")
+- Company names and logos (e.g., "McMaster-Carr", "LEDiL")
 - Title block text (PRODUCT, MATERIAL, SIZE, SHEET, TYPE, COLOUR/COATING)
 - Section labels (e.g., "SECTION A-A", "VIEW B-B", "Section A-A")
 - Zone/grid references (letters A-H and numbers 1-4 at drawing borders)
@@ -185,6 +197,7 @@ Your task is to extract ALL dimensions from this drawing with their COMPLETE val
 - "FIRST ANGLE PROJECTION" text
 - Component/BOM table entries
 - Material specifications (e.g., "PBT", "WHITE")
+- Product names/descriptions (e.g., "Manual-Positioning Slide with Dial")
 
 ## RULES:
 1. Extract the EXACT text as it appears INCLUDING all modifiers
@@ -192,12 +205,16 @@ Your task is to extract ALL dimensions from this drawing with their COMPLETE val
 3. Include tolerance values attached to dimensions
 4. Include quantity multipliers (2x, 4x) that appear near the dimension
 5. Include spacing notations (C/C, B.C.) that appear with the dimension
-6. If a modifier is visually associated with a dimension, include it
-7. Do NOT split a dimension from its modifiers
-8. Do NOT infer or calculate values
-9. If you cannot clearly read a dimension, skip it
+6. **ALWAYS extract thread callouts** - they are inspection characteristics!
+7. If a modifier is visually associated with a dimension, include it
+8. Do NOT split a dimension from its modifiers
+9. Do NOT infer or calculate values
+10. If you cannot clearly read a dimension, skip it
 
 ## QUALITY CHECK (verify before returning):
+- Did I extract ALL thread callouts (6-32, 8-32, M6x1.0, etc.)?
+- Did I include "Thread" or "THD" where they appear with threads?
+- Did I include "For X-XX" thread references?
 - Did I include "(2x)" or "(4x)" where they appear?
 - Did I include "C/C" where it appears?
 - Did I include "TYP" where it appears?
@@ -208,7 +225,7 @@ Your task is to extract ALL dimensions from this drawing with their COMPLETE val
 
 Return a JSON object with this exact structure:
 {
-    "dimensions": ["35 C/C", "Ø3.4 (2x)", "Ø7.5 (2x)", "89.5°", "0.95 REF", "R5 TYP", "Ø44 B.C."]
+    "dimensions": ["6-32 Thread", "For 8-32 Mounting Fastener", "35 C/C", "Ø3.4 (2x)", "89.5°", "0.95 REF", "R5 TYP"]
 }
 
 If no dimensions are found, return:
