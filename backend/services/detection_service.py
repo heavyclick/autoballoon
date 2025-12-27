@@ -1,6 +1,6 @@
 """
 Detection Service - Enhanced Multi-Page Support with Improved Detection
-Orchestrates OCR + Gemini Vision fusion for accurate dimension detection.
+Orchestrates OCR + Gemini Vision fusion for accurate dimension detection..
 
 IMPROVEMENTS:
 - Better compound dimension detection (0.188" Wd. x 7/8" Lg.)
