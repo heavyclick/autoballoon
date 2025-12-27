@@ -483,7 +483,16 @@ class DetectionService:
         matched = []
         used_ocr_indices = set()
         
-        for dim_value in gemini_dimensions:
+        # Deduplicate Gemini dimensions (sometimes returns same dim twice)
+        seen_dims = set()
+        unique_dimensions = []
+        for dim in gemini_dimensions:
+            normalized = self._normalize_for_matching(dim)
+            if normalized not in seen_dims:
+                seen_dims.add(normalized)
+                unique_dimensions.append(dim)
+        
+        for dim_value in unique_dimensions:
             best_match = self._find_best_ocr_match(
                 dim_value, 
                 ocr_detections, 
