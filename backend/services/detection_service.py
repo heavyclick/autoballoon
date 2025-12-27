@@ -481,7 +481,11 @@ class DetectionService:
     ) -> List[Dimension]:
         """
         Match Gemini dimensions to OCR using LOCATION as primary factor.
-        This prevents the wrong bounding box being used.
+        
+        Strategy:
+        1. First try: Find OCR with BOTH good location AND text match
+        2. Second try: Find OCR with good text match, verify location is reasonable
+        3. Third try: Combine nearby raw OCR tokens
         """
         matched = []
         used_ocr_ids = set()
@@ -491,10 +495,11 @@ class DetectionService:
             target_x = gem.x_percent * 10
             target_y = gem.y_percent * 10
             
-            # Find best OCR match by LOCATION first, then text similarity
             best_match = None
             best_score = 0
             
+            # === STRATEGY 1: Location + Text Combined ===
+            # Find OCR that's close AND has text similarity
             for ocr in grouped_ocr:
                 if id(ocr) in used_ocr_ids:
                     continue
@@ -503,29 +508,74 @@ class DetectionService:
                 ocr_x = (box["xmin"] + box["xmax"]) / 2
                 ocr_y = (box["ymin"] + box["ymax"]) / 2
                 
-                # Location score (closer = higher)
                 distance = ((ocr_x - target_x) ** 2 + (ocr_y - target_y) ** 2) ** 0.5
-                max_dist = 300  # Max acceptable distance
-                location_score = max(0, 1 - (distance / max_dist))
-                
-                # Text similarity score
                 text_score = self._text_similarity(gem.value, ocr.text)
                 
-                # Combined score - location weighted higher
-                combined = (location_score * 0.6) + (text_score * 0.4)
+                # MUST have some text relevance - skip completely unrelated text
+                if text_score < 0.15:
+                    continue
                 
-                if combined > best_score and combined > 0.3:
-                    best_score = combined
-                    best_match = ocr
+                # Tighter distance threshold: 150 units = 15% of image
+                max_dist = 150
+                location_score = max(0, 1 - (distance / max_dist))
+                
+                # Combined score - require BOTH to be decent
+                if location_score > 0.3 and text_score > 0.3:
+                    combined = (location_score * 0.5) + (text_score * 0.5)
+                    if combined > best_score:
+                        best_score = combined
+                        best_match = ocr
             
-            # If no grouped match, try combining raw OCR
+            # === STRATEGY 2: Prioritize Text Match with Location Verification ===
+            # If no good combined match, find best text match that's reasonably close
+            if not best_match or best_score < 0.5:
+                text_candidates = []
+                for ocr in grouped_ocr:
+                    if id(ocr) in used_ocr_ids:
+                        continue
+                    
+                    text_score = self._text_similarity(gem.value, ocr.text)
+                    if text_score >= 0.5:  # Good text match
+                        box = ocr.bounding_box
+                        ocr_x = (box["xmin"] + box["xmax"]) / 2
+                        ocr_y = (box["ymin"] + box["ymax"]) / 2
+                        distance = ((ocr_x - target_x) ** 2 + (ocr_y - target_y) ** 2) ** 0.5
+                        
+                        # Allow larger distance if text is very similar
+                        max_allowed = 250 if text_score > 0.7 else 200
+                        if distance < max_allowed:
+                            text_candidates.append((ocr, text_score, distance))
+                
+                if text_candidates:
+                    # Sort by text score, then by distance
+                    text_candidates.sort(key=lambda x: (-x[1], x[2]))
+                    best_match = text_candidates[0][0]
+                    best_score = text_candidates[0][1]
+            
+            # === STRATEGY 3: Combine Raw OCR Tokens ===
             if not best_match or best_score < 0.5:
                 combined_match = self._try_combine_nearby(
                     gem, raw_ocr, target_x, target_y, used_ocr_ids
                 )
                 if combined_match:
-                    best_match = combined_match
-                    best_score = 0.7
+                    # Verify the combined text actually matches
+                    verify_score = self._text_similarity(gem.value, combined_match.text)
+                    if verify_score > 0.5:
+                        best_match = combined_match
+                        best_score = verify_score
+            
+            # === STRATEGY 4: Exact/High Text Match Anywhere ===
+            # Last resort - if there's an exact text match, use it
+            if not best_match or best_score < 0.6:
+                for ocr in grouped_ocr:
+                    if id(ocr) in used_ocr_ids:
+                        continue
+                    
+                    text_score = self._text_similarity(gem.value, ocr.text)
+                    if text_score > 0.85:  # Very high text match
+                        if text_score > best_score:
+                            best_match = ocr
+                            best_score = text_score
             
             if best_match:
                 used_ocr_ids.add(id(best_match))
