@@ -1,7 +1,7 @@
 /**
- * GlassWallPaywall Component
+ * GlassWallPaywall Component - UPDATED with Zero-Storage Security Messaging
  * The "trap" modal that appears when user clicks Export.
- * Shows stats, blurred Excel preview, and pricing options.
+ * Now emphasizes security/privacy as a selling point.
  */
 
 import React, { useState } from 'react';
@@ -9,8 +9,6 @@ import { useGuestSession } from '../context/GuestSessionContext';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../constants/config';
 
-// Import the blurred Excel preview image
-// You'll need to place this in your public/images folder
 const BLURRED_EXCEL_IMAGE = '/images/excel-preview-blurred.png';
 
 export function GlassWallPaywall({ 
@@ -23,33 +21,26 @@ export function GlassWallPaywall({
   const { sessionData, captureEmail, sessionId } = useGuestSession();
   const { isPro } = useAuth();
   const [email, setEmail] = useState('');
-  const [selectedPlan, setSelectedPlan] = useState(null); // 'pass' or 'pro'
+  const [selectedPlan, setSelectedPlan] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showPromoInput, setShowPromoInput] = useState(false);
   const [promoCode, setPromoCode] = useState('');
 
-  // Don't show if Pro user or modal not open
   if (!isOpen || isPro) return null;
 
-  // Use session data if available
   const dims = dimensionCount || sessionData?.dimensionCount || 0;
-  
-  // Calculate time saved - 1 minute per dimension + 10 min setup
   const rawMinutes = (dims * 1) + 10;
   const rawHours = rawMinutes / 60;
   
-  // Format the time nicely
   const formatTimeSaved = () => {
-    if (rawMinutes < 60) {
-      return `${Math.round(rawMinutes)} minutes`;
-    } else if (rawHours < 2) {
+    if (rawMinutes < 60) return `${Math.round(rawMinutes)} minutes`;
+    if (rawHours < 2) {
       const hrs = Math.floor(rawHours);
       const mins = Math.round((rawHours - hrs) * 60);
       return mins > 0 ? `${hrs}h ${mins}m` : `${hrs} hour`;
-    } else {
-      return `${rawHours.toFixed(1)} hours`;
     }
+    return `${rawHours.toFixed(1)} hours`;
   };
   
   const timeSavedDisplay = formatTimeSaved();
@@ -72,16 +63,14 @@ export function GlassWallPaywall({
     setSelectedPlan(plan);
 
     try {
-      // Capture email for the guest session
       await captureEmail(email);
 
-      // Create checkout session with LemonSqueezy
       const response = await fetch(`${API_BASE_URL}/payments/create-checkout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email,
-          plan_type: plan, // 'pass_24h' or 'pro_monthly'
+          plan_type: plan,
           session_id: sessionId,
           promo_code: promoCode || undefined,
         }),
@@ -90,9 +79,7 @@ export function GlassWallPaywall({
       const data = await response.json();
 
       if (data.checkout_url) {
-        // Store session ID in localStorage so we can restore after payment
         localStorage.setItem('autoballoon_pending_payment_session', sessionId);
-        // Redirect to LemonSqueezy checkout
         window.location.href = data.checkout_url;
       } else {
         setError(data.message || 'Failed to create checkout. Please try again.');
@@ -107,15 +94,12 @@ export function GlassWallPaywall({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
-      {/* Backdrop */}
       <div 
         className="absolute inset-0 bg-black/85 backdrop-blur-sm"
         onClick={onClose}
       />
       
-      {/* Modal */}
       <div className="relative bg-[#161616] border border-[#2a2a2a] rounded-2xl max-w-4xl w-full shadow-2xl my-8">
-        {/* Close button - optional, can remove if you want hard paywall */}
         {onClose && (
           <button
             onClick={onClose}
@@ -163,10 +147,25 @@ export function GlassWallPaywall({
               </div>
             </div>
 
-            {/* Value proposition */}
+            {/* Security Badge - NEW */}
+            <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-4 mb-6">
+              <div className="flex items-start gap-3">
+                <svg className="w-5 h-5 text-green-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                <div>
+                  <p className="text-green-400 font-medium text-sm">Zero-Storage Security</p>
+                  <p className="text-green-500/70 text-xs mt-1">
+                    Your drawing was processed in memory and has already been deleted. 
+                    We never store your technical data.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <p className="text-gray-400 mb-6">
               Your <span className="text-white font-medium">AS9102 Form 3</span> is ready. 
-              To download this file and save <span className="text-amber-400 font-medium">{timeSavedDisplay}</span> of 
+              To download and save <span className="text-amber-400 font-medium">{timeSavedDisplay}</span> of 
               work, select a plan below.
             </p>
 
@@ -204,7 +203,6 @@ export function GlassWallPaywall({
               )}
             </div>
 
-            {/* Error Message */}
             {error && (
               <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
                 <p className="text-red-400 text-sm">{error}</p>
@@ -216,7 +214,7 @@ export function GlassWallPaywall({
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
-              Secured by LemonSqueezy • 256-bit encryption
+              Secured by LemonSqueezy • 256-bit encryption • ITAR/EAR Compliant
             </p>
           </div>
 
@@ -228,6 +226,9 @@ export function GlassWallPaywall({
                 src={BLURRED_EXCEL_IMAGE}
                 alt="AS9102 Form 3 Preview"
                 className="w-full h-32 object-cover object-top"
+                onError={(e) => {
+                  e.target.style.display = 'none';
+                }}
               />
             </div>
 
@@ -293,7 +294,6 @@ export function GlassWallPaywall({
                 }`}
                 onClick={() => setSelectedPlan('pro_monthly')}
               >
-                {/* Early Adopter Badge */}
                 <div className="absolute -top-3 left-4">
                   <span className="bg-[#E63946] text-white text-xs font-bold px-3 py-1 rounded-full">
                     EARLY ADOPTER - 50% OFF
@@ -318,25 +318,25 @@ export function GlassWallPaywall({
                     <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Everything in Pass, plus:
+                    Unlimited drawings & exports
                   </li>
                   <li className="flex items-center gap-2 text-gray-400">
                     <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Unlimited projects forever
+                    Priority processing queue
                   </li>
                   <li className="flex items-center gap-2 text-gray-400">
                     <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Cloud storage & history
+                    Multi-page PDF support
                   </li>
                   <li className="flex items-center gap-2 text-gray-400">
-                    <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    <span className="text-amber-400">Rate locked for life</span>
+                    Cancel anytime
                   </li>
                 </ul>
                 <button
@@ -345,23 +345,101 @@ export function GlassWallPaywall({
                     handleProceedToCheckout('pro_monthly');
                   }}
                   disabled={isLoading && selectedPlan === 'pro_monthly'}
-                  className="w-full bg-[#E63946] hover:bg-[#c62d39] text-white font-bold py-2.5 rounded-lg transition-colors disabled:opacity-50"
+                  className="w-full bg-[#E63946] hover:bg-[#d32f3d] text-white font-bold py-2.5 rounded-lg transition-colors disabled:opacity-50"
                 >
-                  {isLoading && selectedPlan === 'pro_monthly' ? 'Processing...' : 'Subscribe - $99/mo'}
+                  {isLoading && selectedPlan === 'pro_monthly' ? 'Processing...' : 'Start Pro - $99/mo'}
+                </button>
+              </div>
+
+              {/* Pro Annual */}
+              <div 
+                className={`relative p-4 rounded-xl border-2 transition-all cursor-pointer ${
+                  selectedPlan === 'pro_annual' 
+                    ? 'border-[#E63946] bg-[#E63946]/5' 
+                    : 'border-[#2a2a2a] hover:border-[#3a3a3a]'
+                }`}
+                onClick={() => setSelectedPlan('pro_annual')}
+              >
+                <div className="absolute -top-3 right-4">
+                  <span className="bg-green-600 text-white text-xs font-bold px-3 py-1 rounded-full">
+                    SAVE $396/YEAR
+                  </span>
+                </div>
+                
+                <div className="flex justify-between items-start mb-3 mt-2">
+                  <div>
+                    <h3 className="text-white font-bold">Pro Annual</h3>
+                    <p className="text-gray-500 text-sm">Best value</p>
+                  </div>
+                  <div className="text-right">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-gray-500 text-lg line-through">$1,188</span>
+                      <span className="text-2xl font-bold text-white">$792</span>
+                    </div>
+                    <div className="text-gray-500 text-xs">/year ($66/mo)</div>
+                  </div>
+                </div>
+                <ul className="space-y-2 text-sm mb-4">
+                  <li className="flex items-center gap-2 text-gray-400">
+                    <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Everything in Pro Monthly
+                  </li>
+                  <li className="flex items-center gap-2 text-gray-400">
+                    <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    2 months free ($396 savings)
+                  </li>
+                  <li className="flex items-center gap-2 text-gray-400">
+                    <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Priority email support
+                  </li>
+                </ul>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleProceedToCheckout('pro_annual');
+                  }}
+                  disabled={isLoading && selectedPlan === 'pro_annual'}
+                  className="w-full bg-[#2a2a2a] hover:bg-[#3a3a3a] text-white font-medium py-2.5 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {isLoading && selectedPlan === 'pro_annual' ? 'Processing...' : 'Go Annual - $792/yr'}
                 </button>
               </div>
             </div>
 
-            {/* Already have account link */}
-            <p className="text-center text-gray-500 mt-6 text-sm">
-              Already have an account?{' '}
-              <button className="text-[#E63946] hover:underline">
-                Log in
-              </button>
-            </p>
+            {/* Trust Badges */}
+            <div className="mt-6 pt-6 border-t border-[#2a2a2a]">
+              <div className="flex items-center justify-center gap-6 text-gray-500 text-xs">
+                <div className="flex items-center gap-1">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  Zero Storage
+                </div>
+                <div className="flex items-center gap-1">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                  ITAR/EAR Ready
+                </div>
+                <div className="flex items-center gap-1">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                  </svg>
+                  Secure Checkout
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
   );
 }
+
+export default GlassWallPaywall;
