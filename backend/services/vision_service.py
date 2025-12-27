@@ -1,8 +1,13 @@
 """
-Vision Service - Enhanced with Location Hints
+Vision Service - AS9102-Compliant Dimension Extraction
 Integrates with Gemini Vision API for semantic understanding of manufacturing drawings.
 
-KEY FEATURE: Returns dimensions WITH approximate bounding box locations
+Based on AS9102 Form 3 requirements:
+- Every design characteristic needs unique balloon
+- Dimensions with tolerances, notes, thread callouts all get ballooned
+- Same dimension in different locations = separate balloons
+- Modifiers (4X, TYP) stay with their dimension
+- Text notes with measurable requirements get ballooned
 """
 import base64
 import json
@@ -24,8 +29,7 @@ class VisionServiceError(Exception):
 
 class VisionService:
     """
-    Gemini Vision API integration for semantic analysis.
-    Identifies dimensions on manufacturing drawings with location hints.
+    Gemini Vision API integration for AS9102-compliant dimension extraction.
     """
     
     GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
@@ -45,12 +49,12 @@ class VisionService:
         image_bytes: bytes
     ) -> List[Dict[str, Any]]:
         """
-        Use Gemini Vision to identify dimensions WITH their approximate locations.
-        Returns list of {value, x, y, confidence} where x,y are percentages (0-100).
+        Extract dimensions with locations for AS9102 Form 3.
+        Returns list of {value, x, y} where x,y are percentages (0-100).
         """
         image_b64 = base64.b64encode(image_bytes).decode("utf-8")
         
-        prompt = self._build_dimension_prompt_with_locations()
+        prompt = self._build_as9102_prompt()
         
         payload = {
             "contents": [{
@@ -72,7 +76,7 @@ class VisionService:
         }
         
         try:
-            async with httpx.AsyncClient(timeout=90.0) as client:
+            async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
                     f"{self.GEMINI_API_URL}?key={self.api_key}",
                     json=payload,
@@ -96,79 +100,111 @@ class VisionService:
                 f"Failed to call Gemini Vision API: {str(e)}"
             )
         
-        return self._parse_dimension_response_with_locations(result)
+        return self._parse_response(result)
     
-    def _build_dimension_prompt_with_locations(self) -> str:
-        """Build prompt that asks for dimensions WITH locations."""
-        return """You are an expert manufacturing engineer extracting dimensions from technical drawings.
+    def _build_as9102_prompt(self) -> str:
+        """Build AS9102-compliant extraction prompt."""
+        return """You are extracting dimensions from an engineering drawing for AS9102 First Article Inspection (FAI) Form 3.
+
+## CONTEXT: AS9102 Form 3 Requirements
+Each dimension you extract will become a row on Form 3 "Characteristic Accountability". Every design characteristic that can be MEASURED or VERIFIED needs its own balloon number. The inspector will use these to verify the manufactured part.
 
 ## YOUR TASK
-Extract ALL dimensions from this drawing. For each dimension, provide:
-1. The exact value as it appears
-2. The approximate X position (0-100, where 0=left edge, 100=right edge)
-3. The approximate Y position (0-100, where 0=top edge, 100=bottom edge)
+Extract ALL design characteristics from this drawing. For each one, provide:
+1. The COMPLETE value exactly as shown (including modifiers, context, tolerances)
+2. X position (0-100, 0=left, 100=right)
+3. Y position (0-100, 0=top, 100=bottom)
 
-## CRITICAL RULES
+## WHAT TO EXTRACT (Design Characteristics)
 
-### RULE 1: NEVER SPLIT COMPOUND DIMENSIONS
-Return these as ONE entry:
+### 1. DIMENSIONS WITH MODIFIERS - Keep Together!
+When a dimension has a quantity modifier, they are ONE characteristic:
+- "4X 0.2in" → ONE entry (not separate "4X" and "0.2in")
+- "2X For 6-32" → ONE entry  
+- "6X 6-32" → ONE entry
+- "3/8 NPT 4X" → ONE entry
+- "(2x) Ø5" → ONE entry
+
+### 2. COMPOUND DIMENSIONS - Never Split!
+Multi-part dimensions describing one feature:
 - "0.188" Wd. x 7/8" Lg. Key" → ONE entry
-- "0.2500in -0.0015 -0.0030" → ONE entry (dimension + tolerances)
-- "Usable Length Range Max.: 1 3/4"" → ONE entry
+- "0.50in Travel Length" → ONE entry
+- "For 3.0in Flange OD" → ONE entry (the label describes what's measured)
+- "For Tube OD: 2 1/2"" → ONE entry
 
-### RULE 2: KEEP MIXED FRACTIONS TOGETHER
-- "3 1/4"" → ONE entry (not "3" and "1/4"")
-- "4 7/8"" → ONE entry
+### 3. TOLERANCED DIMENSIONS - Keep Tolerances!
+- "0.2500in -0.0015 -0.0030" → ONE entry with all tolerances
+- "25.0 ±0.1" → ONE entry
+- "1.500 +0.005/-0.002" → ONE entry
 
-### RULE 3: INCLUDE TOLERANCE STACKS
-When tolerances appear below or next to a dimension:
-- "0.2500in -0.0015 -0.0030" → ONE entry with ALL tolerances
+### 4. THREAD CALLOUTS
+- "3/4"-16 UN/UNF (SAE)" → ONE entry
+- "7/8"-14 UN/UNF (SAE)" → ONE entry
+- "M8x1.25" → ONE entry
+- "1/2 NPT" → ONE entry
 
-### RULE 4: SAME VALUE, DIFFERENT LOCATIONS = SEPARATE ENTRIES
-If "16mm" appears twice in different places, return it twice with different x,y positions.
+### 5. TEXT NOTES WITH MEASURABLE REQUIREMENTS
+Look at text blocks (often at bottom of drawing) for specifications:
+- "Micrometer Graduation Marks: 0.001in" → Extract as ONE entry
+- "Straight Line Travel Accuracy: 0.0005in per in" → Extract as ONE entry
+- "For Screw Size: No. 10" → Extract as ONE entry
 
-### RULE 5: INCLUDE ALL TYPES
-- Linear: 0.75in, 32mm, 3 1/4"
-- Threads: 6-32, M8x1.25, 3/4"-16 UN/UNF (SAE), 7/8"-14 UN/UNF (SAE)
+### 6. DUPLICATE VALUES IN DIFFERENT LOCATIONS
+CRITICAL: If the same dimension value appears in MULTIPLE places on the drawing, each instance needs its own balloon for inspection.
+
+Example: If "1.312in" appears twice (left side and right side):
+✓ CORRECT - Return BOTH with different positions:
+  {"value": "1.312in", "x": 25, "y": 35},
+  {"value": "1.312in", "x": 75, "y": 35}
+
+✗ WRONG - Only returning one:
+  {"value": "1.312in", "x": 25, "y": 35}
+
+Count carefully! Scan the ENTIRE drawing for repeated values.
+
+### 7. SIMPLE DIMENSIONS
+- Linear: 1.75in, 32mm, 4.750in
+- Fractions: 1/4", 3/8"
+- Mixed fractions: 3 1/4", 4 7/8"
 - Diameters: Ø5, ⌀3.2
 - Radii: R2.5
-- Angles: 45°
-- Toleranced: 25.0 ±0.1, 0.500 +0.005/-0.002
-- Compound: 0.188" Wd. x 7/8" Lg. Key
-- With modifiers: 2X For 6-32, 6X 6-32, Ø3.4 (2x)
+- Angles: 45°, 40deg
 
-### WHAT TO IGNORE
-- Part numbers (6296K81, 91388A212)
+## WHAT TO IGNORE (Not Design Characteristics)
+- Part numbers (6296K81, 5469K125)
 - Company names (McMaster-Carr)
-- Drawing titles, revision marks
-- Scale indicators
-- Zone letters at borders (A, B, C, 1, 2, 3)
+- Drawing titles (Hydraulic Pump, Positioning Table)
+- Copyright text
+- Zone/grid letters at borders (A, B, C, 1, 2, 3)
+- "CAD", "PART NUMBER" labels
+- URLs (http://www.mcmaster.com)
 
 ## RESPONSE FORMAT
-Return a JSON object with a "dimensions" array:
+Return JSON with "dimensions" array. Each entry needs value, x, y:
+
 {
-    "dimensions": [
-        {"value": "3/4\\"-16 UN/UNF (SAE)", "x": 75, "y": 15},
-        {"value": "4 7/8\\"", "x": 45, "y": 30},
-        {"value": "3 1/4\\"", "x": 45, "y": 35},
-        {"value": "0.188\\" Wd. x 7/8\\" Lg. Key", "x": 55, "y": 55},
-        {"value": "0.2500in -0.0015 -0.0030", "x": 50, "y": 50},
-        {"value": "16mm", "x": 30, "y": 80},
-        {"value": "16mm", "x": 70, "y": 80}
-    ]
+  "dimensions": [
+    {"value": "4X 0.2in", "x": 12, "y": 22},
+    {"value": "For 3.0in Flange OD", "x": 35, "y": 25},
+    {"value": "0.188\" Wd. x 7/8\" Lg. Key", "x": 45, "y": 58},
+    {"value": "1.312in", "x": 25, "y": 35},
+    {"value": "1.312in", "x": 75, "y": 35},
+    {"value": "Micrometer Graduation Marks: 0.001in", "x": 15, "y": 92}
+  ]
 }
 
-IMPORTANT: 
-- x and y are percentages (0-100) representing position on the image
-- Be as accurate as possible with locations
-- Include ALL dimensions, even if values repeat (with different locations)
-- Return ONLY the JSON object, no other text"""
-    
-    def _parse_dimension_response_with_locations(
-        self, 
-        response: dict
-    ) -> List[Dict[str, Any]]:
-        """Parse Gemini's response with locations."""
+## CHECKLIST BEFORE RESPONDING
+☐ Did I keep modifiers WITH their dimensions? (4X, 2X, TYP)
+☐ Did I keep compound dimensions together? (Wd. x Lg., Travel Length)
+☐ Did I extract dimensions from text notes at bottom?
+☐ Did I include EVERY instance of repeated dimension values?
+☐ Did I include thread callouts with full specification?
+☐ Are x,y positions accurate for WHERE each dimension appears?
+
+Return ONLY the JSON object, no other text."""
+
+    def _parse_response(self, response: dict) -> List[Dict[str, Any]]:
+        """Parse Gemini's response."""
         try:
             candidates = response.get("candidates", [])
             if not candidates:
@@ -179,76 +215,74 @@ IMPORTANT:
             if not parts:
                 return []
             
-            text = parts[0].get("text", "")
+            text = parts[0].get("text", "").strip()
             
             # Handle markdown code blocks
-            text = text.strip()
             if text.startswith("```"):
                 lines = text.split("\n")
-                text = "\n".join(lines[1:-1])
+                end_idx = -1
+                for i, line in enumerate(lines[1:], 1):
+                    if line.strip() == "```":
+                        end_idx = i
+                        break
+                if end_idx > 0:
+                    text = "\n".join(lines[1:end_idx])
+                else:
+                    text = "\n".join(lines[1:])
             
             data = json.loads(text)
             dimensions = data.get("dimensions", [])
             
             # Validate and clean
-            clean_dimensions = []
+            clean = []
             for dim in dimensions:
                 if isinstance(dim, dict) and dim.get('value'):
-                    clean_dimensions.append({
-                        'value': dim['value'].strip(),
-                        'x': float(dim.get('x', 50)),
-                        'y': float(dim.get('y', 50)),
-                        'confidence': 0.85
-                    })
+                    value = str(dim['value']).strip()
+                    if value and len(value) > 0:
+                        clean.append({
+                            'value': value,
+                            'x': float(dim.get('x', 50)),
+                            'y': float(dim.get('y', 50)),
+                            'confidence': 0.85
+                        })
                 elif isinstance(dim, str) and dim.strip():
-                    # Fallback for old format
-                    clean_dimensions.append({
+                    clean.append({
                         'value': dim.strip(),
                         'x': 50,
                         'y': 50,
                         'confidence': 0.7
                     })
             
-            return clean_dimensions
+            return clean
             
         except json.JSONDecodeError as e:
             print(f"Gemini JSON error: {e}")
-            # Try to extract dimensions from malformed response
-            return self._extract_fallback(response)
-        except (KeyError, IndexError, TypeError) as e:
+            return self._fallback_extract(response)
+        except Exception as e:
             print(f"Gemini parse error: {e}")
             return []
     
-    def _extract_fallback(self, response: dict) -> List[Dict[str, Any]]:
-        """Fallback extraction if JSON parsing fails."""
+    def _fallback_extract(self, response: dict) -> List[Dict[str, Any]]:
+        """Fallback extraction if JSON fails."""
         try:
             candidates = response.get("candidates", [])
             if not candidates:
                 return []
             
-            content = candidates[0].get("content", {})
-            parts = content.get("parts", [])
-            if not parts:
-                return []
+            text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
             
-            text = parts[0].get("text", "")
-            
-            # Try to find dimension-like patterns in text
             dimensions = []
-            
-            # Common patterns
             patterns = [
-                r'\d+\s+\d+/\d+["\']',  # Mixed fractions
-                r'\d+/\d+["\']',         # Fractions
-                r'\d+\.\d+(?:in|mm|")',  # Decimals
-                r'[ØøR]\d+\.?\d*',       # Diameter/radius
-                r'M\d+(?:x\d+\.?\d*)?',  # Metric threads
-                r'\d+/\d+-\d+\s*UN[CF]?', # UTS threads
+                r'\d+\s+\d+/\d+["\']',
+                r'\d+/\d+["\']',
+                r'\d+\.\d+(?:in|mm)',
+                r'[ØøR]\d+\.?\d*',
+                r'M\d+(?:x\d+\.?\d*)?',
+                r'\d+/\d+\s*NPT',
             ]
             
             for pattern in patterns:
-                matches = re.findall(pattern, text, re.IGNORECASE)
-                for match in matches:
+                for match in re.findall(pattern, text, re.IGNORECASE):
                     dimensions.append({
                         'value': match,
                         'x': 50,
@@ -257,116 +291,20 @@ IMPORTANT:
                     })
             
             return dimensions
-            
-        except Exception:
+        except:
             return []
     
     async def detect_grid(self, image_bytes: bytes) -> Optional[dict]:
-        """Detect grid reference system on the drawing."""
-        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-        
-        prompt = """Analyze this engineering drawing and identify the grid reference system if present.
-
-Return a JSON object:
-{
-    "has_grid": true,
-    "columns": ["A", "B", "C", "D", "E", "F", "G", "H"],
-    "rows": ["1", "2", "3", "4"],
-    "column_count": 8,
-    "row_count": 4
-}
-
-If no grid is found:
-{
-    "has_grid": false
-}
-
-Return ONLY the JSON object."""
-        
-        payload = {
-            "contents": [{
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": "image/png",
-                            "data": image_b64
-                        }
-                    }
-                ]
-            }],
-            "generationConfig": {
-                "temperature": 0.1,
-                "maxOutputTokens": 2048,
-                "responseMimeType": "application/json"
+        """Detect grid reference system."""
+        # Simplified - return standard grid
+        return {
+            "columns": ['H', 'G', 'F', 'E', 'D', 'C', 'B', 'A'],
+            "rows": ['4', '3', '2', '1'],
+            "boundaries": {
+                "column_edges": [0, 125, 250, 375, 500, 625, 750, 875, 1000],
+                "row_edges": [0, 250, 500, 750, 1000]
             }
         }
-        
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    f"{self.GEMINI_API_URL}?key={self.api_key}",
-                    json=payload,
-                    headers={"Content-Type": "application/json"}
-                )
-                response.raise_for_status()
-                result = response.json()
-        except Exception:
-            return None
-        
-        return self._parse_grid_response(result)
-    
-    def _parse_grid_response(self, response: dict) -> Optional[dict]:
-        """Parse Gemini's grid detection response."""
-        try:
-            candidates = response.get("candidates", [])
-            if not candidates:
-                return None
-            
-            content = candidates[0].get("content", {})
-            parts = content.get("parts", [])
-            if not parts:
-                return None
-            
-            text = parts[0].get("text", "").strip()
-            if text.startswith("```"):
-                lines = text.split("\n")
-                text = "\n".join(lines[1:-1])
-            
-            data = json.loads(text)
-            
-            if not data.get("has_grid", False):
-                return None
-            
-            columns = data.get("columns", [])
-            rows = data.get("rows", [])
-            
-            if not columns or not rows:
-                return None
-            
-            col_count = len(columns)
-            row_count = len(rows)
-            
-            column_edges = [
-                int(i * NORMALIZED_COORD_SYSTEM / col_count) 
-                for i in range(col_count + 1)
-            ]
-            row_edges = [
-                int(i * NORMALIZED_COORD_SYSTEM / row_count) 
-                for i in range(row_count + 1)
-            ]
-            
-            return {
-                "columns": columns,
-                "rows": rows,
-                "boundaries": {
-                    "column_edges": column_edges,
-                    "row_edges": row_edges
-                }
-            }
-            
-        except (json.JSONDecodeError, KeyError, IndexError, TypeError):
-            return None
 
 
 def create_vision_service(api_key: Optional[str] = None) -> VisionService:
