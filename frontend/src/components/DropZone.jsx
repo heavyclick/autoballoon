@@ -1,12 +1,10 @@
 /**
- * DropZone.jsx - UPDATED with UX Improvements
- * 
- * THREE FIXES IMPLEMENTED:
- * 1. Tooltip stays visible when moving from balloon to tooltip (invisible bridge)
- * 2. Add Balloon mode: draw rectangle → OCR detect OR manual entry → balloon created
- * 3. Clear Area mode: draw rectangle → balloons inside deleted
- * 
- * PRESERVED: All original functionality including multi-page, Glass Wall, CMM import, etc.
+ * DropZone.jsx - FIXED
+ * * FIXES:
+ * 1. Removed "Orphan" code block that caused crash
+ * 2. Fixed 422 Error (Integers for width/height)
+ * 3. Fixed Tooltip "Invisible Bridge"
+ * 4. Fixed Add Balloon "Smart Click"
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -415,8 +413,7 @@ function DownloadMenu({ onDownloadPDF, onDownloadZIP, onDownloadExcel, isDownloa
           </svg>
         ) : !isPro ? (
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
         ) : (
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -585,6 +582,26 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
   }, [drawMode, showValueInput]);
   
   // ===== Rectangle Drawing Handlers =====
+  const handleMouseDown = (e) => {
+    if (!drawMode || !containerRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    setIsDrawing(true);
+    setDrawStart({ x, y });
+    setDrawEnd({ x, y });
+  };
+  
+  const handleMouseMove = (e) => {
+    if (!isDrawing || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+    const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+    setDrawEnd({ x, y });
+  };
+    
   // Updated handleMouseUp with "Smart Click" logic
   const handleMouseUp = async () => {
     if (!isDrawing || !drawStart || !drawEnd) {
@@ -664,7 +681,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
     setDrawEnd(null);
   };
   
-  
+  // Clean, unified detectTextInRegion function
   const detectTextInRegion = async (minX, maxX, minY, maxY) => {
     if (!imageRef.current) {
       setDetectionError('Image not loaded. Enter value manually.');
@@ -1016,7 +1033,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
               type="text"
               value={newBalloonValue}
               onChange={(e) => setNewBalloonValue(e.target.value)}
-              placeholder='e.g., 0.45", 21 Teeth 0.080in Pitch...'
+              placeholder="e.g., 0.45&quot;, 21 Teeth 0.080in Pitch..."
               className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-white text-sm mb-4"
               autoFocus
               disabled={isDetecting}
@@ -1222,8 +1239,7 @@ function DraggableBalloon({ dimension, left, top, onDelete, onDrag, cmmResult, c
 
   /**
    * UX FIX #1: Tooltip stays visible when moving from balloon to tooltip
-   * 
-   * HOW IT WORKS:
+   * * HOW IT WORKS:
    * - The outer container div tracks hover state for BOTH the balloon AND the tooltip
    * - The tooltip wrapper has paddingLeft: '8px' which creates an "invisible bridge"
    * - When you move your cursor from the balloon to the tooltip, you're still inside the container
