@@ -1,12 +1,14 @@
 """
 Authentication API Routes
-Magic link login and session management
+Magic link login, session management, and post-payment auto-login.
 """
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Request
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 
 from services.auth_service import auth_service, User
+# Added database service import for session exchange
+from services.database_service import get_db
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -46,6 +48,10 @@ class UserResponse(BaseModel):
     email: str
     is_pro: bool
     history_enabled: bool
+
+# NEW: Model for exchanging session ID for login token
+class SessionExchangeRequest(BaseModel):
+    session_id: str
 
 
 # ==================
@@ -155,3 +161,47 @@ async def logout():
     This endpoint exists for API completeness.
     """
     return {"success": True, "message": "Logged out successfully"}
+
+
+@router.post("/exchange-session")
+async def exchange_session(request: SessionExchangeRequest):
+    """
+    NEW: Exchange a paid guest session ID for a user login token.
+    Allows auto-login after payment without waiting for email.
+    """
+    db = get_db()
+    
+    # 1. Find the session
+    session = db.table("guest_sessions").select("*").eq("session_id", request.session_id).single().execute()
+    
+    if not session.data:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    data = session.data
+    
+    # 2. Verify it is claimed (paid) or belongs to a user
+    # We check 'claimed_by' (set by webhook) or fallback to checking email if webhook missed 'claim' step but user exists
+    user = None
+    
+    if data.get("claimed_by"):
+        user_id = data.get("claimed_by")
+        user = auth_service.get_user_by_id(user_id)
+    elif data.get("email"):
+        # Fallback: check if the email on the session has a pro account
+        user = auth_service.get_user_by_email(data.get("email"))
+        if not user or not user.is_pro:
+             # If user doesn't exist or isn't pro, they shouldn't be logging in via this route yet
+             raise HTTPException(status_code=403, detail="Session not yet confirmed paid")
+    else:
+        raise HTTPException(status_code=403, detail="Session not claimed")
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    # 3. Issue Token
+    token = auth_service.create_access_token(user)
+    
+    return {
+        "user": user.model_dump(),
+        "access_token": token
+    }
