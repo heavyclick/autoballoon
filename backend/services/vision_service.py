@@ -2,7 +2,12 @@
 Vision Service - AS9102-Compliant Dimension Extraction
 Integrates with Gemini Vision API for semantic understanding of manufacturing drawings.
 
-UPDATED: Better handling of multi-line callouts (e.g., "21 Teeth" + "0.080in Pitch" = ONE dimension)
+Based on AS9102 Form 3 requirements:
+- Every design characteristic needs unique balloon
+- Dimensions with tolerances, notes, thread callouts all get ballooned
+- Same dimension in different locations = separate balloons
+- Modifiers (4X, TYP) stay with their dimension
+- Text notes with measurable requirements get ballooned
 """
 import base64
 import json
@@ -98,124 +103,102 @@ class VisionService:
         return self._parse_response(result)
     
     def _build_as9102_prompt(self) -> str:
-        """Build AS9102-compliant extraction prompt with improved multi-line handling."""
+        """Build AS9102-compliant extraction prompt."""
         return """You are extracting dimensions from an engineering drawing for AS9102 First Article Inspection (FAI) Form 3.
 
 ## CONTEXT: AS9102 Form 3 Requirements
-Each dimension you extract will become a row on Form 3 "Characteristic Accountability". Every design characteristic that can be MEASURED or VERIFIED needs its own balloon number.
+Each dimension you extract will become a row on Form 3 "Characteristic Accountability". Every design characteristic that can be MEASURED or VERIFIED needs its own balloon number. The inspector will use these to verify the manufactured part.
 
 ## YOUR TASK
 Extract ALL design characteristics from this drawing. For each one, provide:
-1. The COMPLETE value exactly as shown (including ALL related text)
+1. The COMPLETE value exactly as shown (including modifiers, context, tolerances)
 2. X position (0-100, 0=left, 100=right)
 3. Y position (0-100, 0=top, 100=bottom)
 
-## CRITICAL: MULTI-LINE CALLOUTS ARE ONE DIMENSION
-
-Engineering drawings often have dimension callouts that span MULTIPLE LINES. These describe ONE feature and must be kept together as a SINGLE dimension.
-
-### EXAMPLES OF MULTI-LINE CALLOUTS (extract as ONE entry):
-
-**Gear/Thread specifications:**
-```
-21 Teeth
-0.080in Pitch
-```
-→ Extract as: "21 Teeth 0.080in Pitch" (ONE dimension)
-
-**Belt/Width specifications:**
-```
-0.160in
-For 1/8" Max. Belt Width
-```
-→ Extract as: "0.160in For 1/8\" Max. Belt Width" (ONE dimension)
-
-**Shaft specifications:**
-```
-For 0.250in
-Shaft Diameter
-```
-→ Extract as: "For 0.250in Shaft Diameter" (ONE dimension)
-
-**Flange specifications:**
-```
-For 3.0in
-Flange OD
-```
-→ Extract as: "For 3.0in Flange OD" (ONE dimension)
-
-**Key dimensions:**
-```
-0.188" Wd.
-x 7/8" Lg. Key
-```
-→ Extract as: "0.188\" Wd. x 7/8\" Lg. Key" (ONE dimension)
-
-### HOW TO IDENTIFY MULTI-LINE CALLOUTS:
-1. Text lines that are VERTICALLY STACKED (one below the other)
-2. Connected by a SINGLE leader line pointing to one feature
-3. The lower text provides CONTEXT for the upper text (e.g., "Pitch", "Diameter", "OD", "Width")
-4. Together they describe ONE measurable characteristic
-
-### COMMON DESCRIPTIVE SUFFIXES (keep with dimension above):
-- "Pitch", "Teeth", "Thread"
-- "Diameter", "OD", "ID"  
-- "Width", "Belt Width", "Key"
-- "Shaft", "Flange", "Tube"
-- "Travel", "Length", "Lg."
-
-## WHAT TO EXTRACT
+## WHAT TO EXTRACT (Design Characteristics)
 
 ### 1. DIMENSIONS WITH MODIFIERS - Keep Together!
-- "4X 0.2in" → ONE entry
-- "2X For 6-32" → ONE entry
+When a dimension has a quantity modifier, they are ONE characteristic:
+- "4X 0.2in" → ONE entry (not separate "4X" and "0.2in")
+- "2X For 6-32" → ONE entry  
 - "6X 6-32" → ONE entry
+- "3/8 NPT 4X" → ONE entry
+- "(2x) Ø5" → ONE entry
 
-### 2. TOLERANCED DIMENSIONS
-- "0.2500in -0.0015 -0.0030" → ONE entry
+### 2. COMPOUND DIMENSIONS - Never Split!
+Multi-part dimensions describing one feature:
+- "0.188" Wd. x 7/8" Lg. Key" → ONE entry
+- "0.50in Travel Length" → ONE entry
+- "For 3.0in Flange OD" → ONE entry (the label describes what's measured)
+- "For Tube OD: 2 1/2"" → ONE entry
+
+### 3. TOLERANCED DIMENSIONS - Keep Tolerances!
+- "0.2500in -0.0015 -0.0030" → ONE entry with all tolerances
 - "25.0 ±0.1" → ONE entry
+- "1.500 +0.005/-0.002" → ONE entry
 
-### 3. THREAD CALLOUTS
-- "3/4\"-16 UN/UNF (SAE)" → ONE entry
+### 4. THREAD CALLOUTS
+- "3/4"-16 UN/UNF (SAE)" → ONE entry
+- "7/8"-14 UN/UNF (SAE)" → ONE entry
 - "M8x1.25" → ONE entry
-- "4-40 Set Screw" → ONE entry
+- "1/2 NPT" → ONE entry
 
-### 4. SIMPLE DIMENSIONS
-- Linear: 1.75in, 32mm, 0.710in
+### 5. TEXT NOTES WITH MEASURABLE REQUIREMENTS
+Look at text blocks (often at bottom of drawing) for specifications:
+- "Micrometer Graduation Marks: 0.001in" → Extract as ONE entry
+- "Straight Line Travel Accuracy: 0.0005in per in" → Extract as ONE entry
+- "For Screw Size: No. 10" → Extract as ONE entry
+
+### 6. DUPLICATE VALUES IN DIFFERENT LOCATIONS
+CRITICAL: If the same dimension value appears in MULTIPLE places on the drawing, each instance needs its own balloon for inspection.
+
+Example: If "1.312in" appears twice (left side and right side):
+✓ CORRECT - Return BOTH with different positions:
+  {"value": "1.312in", "x": 25, "y": 35},
+  {"value": "1.312in", "x": 75, "y": 35}
+
+✗ WRONG - Only returning one:
+  {"value": "1.312in", "x": 25, "y": 35}
+
+Count carefully! Scan the ENTIRE drawing for repeated values.
+
+### 7. SIMPLE DIMENSIONS
+- Linear: 1.75in, 32mm, 4.750in
 - Fractions: 1/4", 3/8"
-- Diameters: Ø5, 0.438in
-- Angles: 45°
+- Mixed fractions: 3 1/4", 4 7/8"
+- Diameters: Ø5, ⌀3.2
+- Radii: R2.5
+- Angles: 45°, 40deg
 
 ## WHAT TO IGNORE (Not Design Characteristics)
-- Part numbers (6296K81, 1375K23)
+- Part numbers (6296K81, 5469K125)
 - Company names (McMaster-Carr)
-- Drawing titles
+- Drawing titles (Hydraulic Pump, Positioning Table)
 - Copyright text
-- Zone/grid letters at borders
+- Zone/grid letters at borders (A, B, C, 1, 2, 3)
 - "CAD", "PART NUMBER" labels
-- URLs
+- URLs (http://www.mcmaster.com)
 
 ## RESPONSE FORMAT
-Return JSON with "dimensions" array:
+Return JSON with "dimensions" array. Each entry needs value, x, y:
 
 {
   "dimensions": [
-    {"value": "0.710in", "x": 35, "y": 28},
-    {"value": "0.535in Pitch Diameter", "x": 38, "y": 35},
-    {"value": "0.438in", "x": 72, "y": 28},
-    {"value": "0.208in", "x": 85, "y": 32},
-    {"value": "4-40 Set Screw", "x": 62, "y": 38},
-    {"value": "21 Teeth 0.080in Pitch", "x": 82, "y": 42},
-    {"value": "0.160in For 1/8\" Max. Belt Width", "x": 80, "y": 55},
-    {"value": "For 0.250in Shaft Diameter", "x": 45, "y": 55}
+    {"value": "4X 0.2in", "x": 12, "y": 22},
+    {"value": "For 3.0in Flange OD", "x": 35, "y": 25},
+    {"value": "0.188\" Wd. x 7/8\" Lg. Key", "x": 45, "y": 58},
+    {"value": "1.312in", "x": 25, "y": 35},
+    {"value": "1.312in", "x": 75, "y": 35},
+    {"value": "Micrometer Graduation Marks: 0.001in", "x": 15, "y": 92}
   ]
 }
 
 ## CHECKLIST BEFORE RESPONDING
-☐ Did I combine multi-line callouts into single entries?
 ☐ Did I keep modifiers WITH their dimensions? (4X, 2X, TYP)
+☐ Did I keep compound dimensions together? (Wd. x Lg., Travel Length)
+☐ Did I extract dimensions from text notes at bottom?
+☐ Did I include EVERY instance of repeated dimension values?
 ☐ Did I include thread callouts with full specification?
-☐ Did I ignore title block text (part numbers, company names)?
 ☐ Are x,y positions accurate for WHERE each dimension appears?
 
 Return ONLY the JSON object, no other text."""
@@ -313,6 +296,7 @@ Return ONLY the JSON object, no other text."""
     
     async def detect_grid(self, image_bytes: bytes) -> Optional[dict]:
         """Detect grid reference system."""
+        # Simplified - return standard grid
         return {
             "columns": ['H', 'G', 'F', 'E', 'D', 'C', 'B', 'A'],
             "rows": ['4', '3', '2', '1'],
