@@ -1,6 +1,6 @@
 """
 Payment Routes - LemonSqueezy Integration for Glass Wall
-Handles checkout creation and webhook processing.
+Handles checkout creation and webhook processing for 24h Pass, Monthly, and Yearly plans.
 """
 from fastapi import APIRouter, Request, Header, HTTPException
 from pydantic import BaseModel, EmailStr
@@ -11,31 +11,35 @@ import hashlib
 import os
 from datetime import datetime, timedelta
 
+# Import Supabase client
+from supabase import create_client, Client
+
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
+# ======================
 # LemonSqueezy Configuration
+# ======================
 LEMONSQUEEZY_API_KEY = os.getenv("LEMONSQUEEZY_API_KEY", "")
 LEMONSQUEEZY_STORE_ID = os.getenv("LEMONSQUEEZY_STORE_ID", "")
 LEMONSQUEEZY_WEBHOOK_SECRET = os.getenv("LEMONSQUEEZY_WEBHOOK_SECRET", "")
 
-# Product Variant IDs (you'll set these after creating products in LemonSqueezy)
+# Product Variant IDs
 LEMONSQUEEZY_PASS_24H_VARIANT_ID = os.getenv("LEMONSQUEEZY_PASS_24H_VARIANT_ID", "")
 LEMONSQUEEZY_PRO_MONTHLY_VARIANT_ID = os.getenv("LEMONSQUEEZY_PRO_MONTHLY_VARIANT_ID", "")
+LEMONSQUEEZY_PRO_YEARLY_VARIANT_ID = os.getenv("LEMONSQUEEZY_PRO_YEARLY_VARIANT_ID", "")
 
 APP_URL = os.getenv("APP_URL", "https://autoballoon.space")
 
-# Import Supabase client
-from supabase import create_client, Client
-
+# ======================
+# Database Configuration
+# ======================
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
-
 
 def get_supabase() -> Optional[Client]:
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
         return None
     return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-
 
 # ==================
 # Request/Response Models
@@ -44,23 +48,21 @@ def get_supabase() -> Optional[Client]:
 class PricingResponse(BaseModel):
     pass_price: int = 49
     pro_price: int = 99
+    yearly_price: int = 990  # Example: 10 months price for 12 months
     currency: str = "USD"
     pass_features: list[str]
     pro_features: list[str]
 
-
 class CheckoutRequest(BaseModel):
     email: EmailStr
-    plan_type: str  # 'pass_24h' or 'pro_monthly'
+    plan_type: str  # 'pass_24h', 'pro_monthly', or 'pro_yearly'
     session_id: Optional[str] = None  # Guest session to restore after payment
     promo_code: Optional[str] = None
-
 
 class CheckoutResponse(BaseModel):
     success: bool
     checkout_url: Optional[str] = None
     message: Optional[str] = None
-
 
 # ==================
 # API Endpoints
@@ -72,6 +74,7 @@ async def get_pricing():
     return PricingResponse(
         pass_price=49,
         pro_price=99,
+        yearly_price=990,
         currency="USD",
         pass_features=[
             "Download this file immediately",
@@ -87,7 +90,6 @@ async def get_pricing():
         ]
     )
 
-
 @router.post("/create-checkout", response_model=CheckoutResponse)
 async def create_checkout(request: CheckoutRequest):
     """Create a LemonSqueezy checkout session"""
@@ -96,10 +98,13 @@ async def create_checkout(request: CheckoutRequest):
         raise HTTPException(status_code=500, detail="Payment not configured")
     
     # Determine which variant to use
+    variant_id = None
     if request.plan_type == "pass_24h":
         variant_id = LEMONSQUEEZY_PASS_24H_VARIANT_ID
     elif request.plan_type == "pro_monthly":
         variant_id = LEMONSQUEEZY_PRO_MONTHLY_VARIANT_ID
+    elif request.plan_type == "pro_yearly":
+        variant_id = LEMONSQUEEZY_PRO_YEARLY_VARIANT_ID
     else:
         raise HTTPException(status_code=400, detail="Invalid plan type")
     
@@ -113,7 +118,7 @@ async def create_checkout(request: CheckoutRequest):
     
     try:
         async with httpx.AsyncClient() as client:
-            checkout_data = {
+            checkout_payload = {
                 "data": {
                     "type": "checkouts",
                     "attributes": {
@@ -153,7 +158,7 @@ async def create_checkout(request: CheckoutRequest):
             
             # Add discount code if provided
             if request.promo_code:
-                checkout_data["data"]["attributes"]["checkout_data"]["discount_code"] = request.promo_code
+                checkout_payload["data"]["attributes"]["checkout_data"]["discount_code"] = request.promo_code
             
             response = await client.post(
                 "https://api.lemonsqueezy.com/v1/checkouts",
@@ -162,7 +167,7 @@ async def create_checkout(request: CheckoutRequest):
                     "Content-Type": "application/vnd.api+json",
                     "Accept": "application/vnd.api+json"
                 },
-                json=checkout_data
+                json=checkout_payload
             )
             
             if response.status_code == 201:
@@ -182,7 +187,6 @@ async def create_checkout(request: CheckoutRequest):
     except Exception as e:
         print(f"Checkout error: {e}")
         raise HTTPException(status_code=500, detail="Payment service error")
-
 
 @router.post("/webhook")
 async def handle_webhook(
@@ -246,7 +250,6 @@ async def handle_webhook(
     
     return {"status": "received"}
 
-
 async def handle_order_created(payload: dict, supabase):
     """Handle one-time purchase (24-hour pass)"""
     custom_data = payload.get("meta", {}).get("custom_data", {})
@@ -299,9 +302,8 @@ async def handle_order_created(payload: dict, supabase):
     except Exception as e:
         print(f"Error handling order: {e}")
 
-
 async def handle_subscription_created(payload: dict, supabase):
-    """Handle new Pro subscription"""
+    """Handle new Pro subscription (Monthly or Yearly)"""
     custom_data = payload.get("meta", {}).get("custom_data", {})
     data = payload.get("data", {})
     attributes = data.get("attributes", {})
@@ -310,6 +312,7 @@ async def handle_subscription_created(payload: dict, supabase):
     session_id = custom_data.get("session_id")
     subscription_id = str(data.get("id", ""))
     customer_id = str(attributes.get("customer_id", ""))
+    plan_type = custom_data.get("plan_type", "pro_monthly") # Default to monthly if missing
     
     if not email or not supabase:
         return
@@ -324,7 +327,7 @@ async def handle_subscription_created(payload: dict, supabase):
             user_id = user_result.data[0]["id"]
             # Update to Pro
             supabase.table("users").update({
-                "plan_tier": "pro",
+                "plan_tier": plan_type, # 'pro_monthly' or 'pro_yearly'
                 "is_pro": True,
                 "subscription_status": "active",
                 "lemonsqueezy_subscription_id": subscription_id,
@@ -335,7 +338,7 @@ async def handle_subscription_created(payload: dict, supabase):
             # Create new Pro user
             result = supabase.table("users").insert({
                 "email": email.lower(),
-                "plan_tier": "pro",
+                "plan_tier": plan_type,
                 "is_pro": True,
                 "subscription_status": "active",
                 "lemonsqueezy_subscription_id": subscription_id,
@@ -350,18 +353,14 @@ async def handle_subscription_created(payload: dict, supabase):
                 "claimed_by": user_id,
             }).eq("session_id", session_id).execute()
         
-        print(f"Pro subscription activated for {email}")
-        
-        # TODO: Send welcome email via Resend
+        print(f"Pro subscription ({plan_type}) activated for {email}")
         
     except Exception as e:
         print(f"Error handling subscription: {e}")
 
-
 async def handle_subscription_cancelled(payload: dict, supabase):
     """Handle subscription cancellation"""
     data = payload.get("data", {})
-    attributes = data.get("attributes", {})
     subscription_id = str(data.get("id", ""))
     
     if not supabase:
@@ -369,17 +368,15 @@ async def handle_subscription_cancelled(payload: dict, supabase):
     
     try:
         # Find user by subscription ID and downgrade
+        # Note: In a real app you might want to wait until period_ends_at
         supabase.table("users").update({
             "subscription_status": "cancelled",
-            # Keep is_pro True until end of billing period
-            # You might want to handle this differently based on ends_at
         }).eq("lemonsqueezy_subscription_id", subscription_id).execute()
         
         print(f"Subscription {subscription_id} cancelled")
         
     except Exception as e:
         print(f"Error handling cancellation: {e}")
-
 
 async def handle_subscription_payment(payload: dict, supabase):
     """Handle successful subscription payment (renewal)"""
@@ -399,7 +396,6 @@ async def handle_subscription_payment(payload: dict, supabase):
     except Exception as e:
         print(f"Error handling payment: {e}")
 
-
 @router.get("/check-access")
 async def check_access(email: str):
     """Check if a user has export access (for frontend verification)"""
@@ -417,9 +413,9 @@ async def check_access(email: str):
         
         user = result.data
         
-        # Check Pro status
+        # Check Pro status (Active subscription)
         if user.get("is_pro") and user.get("subscription_status") == "active":
-            return {"has_access": True, "plan": "pro"}
+            return {"has_access": True, "plan": user.get("plan_tier", "pro")}
         
         # Check 24-hour pass
         if user.get("plan_tier") == "pass_24h" and user.get("pass_expires_at"):
