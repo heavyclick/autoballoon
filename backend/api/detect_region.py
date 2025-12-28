@@ -4,7 +4,7 @@ POST /api/detect-region
 
 Features:
 1. Center-Weighted Priority: Focuses on text in the middle of the crop (where user clicked).
-2. Intelligent Grouping: Handles "For", "Teeth", "Pitch" patterns.
+2. Intelligent Grouping: Handles "For", "Teeth", "Pitch", "Diameter" patterns.
 3. Gemini Vision: Semantic understanding with center-focus prompt.
 """
 import base64
@@ -48,7 +48,7 @@ class RegionDetectionService:
         debug_info = {
             "ocr_raw": [],
             "ocr_grouped": [],
-            "sorted_candidates": [], # New debug info
+            "sorted_candidates": [], 
             "gemini_result": None,
             "selection_reason": None
         }
@@ -59,13 +59,12 @@ class RegionDetectionService:
             if not raw_ocr:
                 return RegionDetectResponse(success=False, error="No text detected", debug=debug_info)
             
-            # 2. Group OCR tokens (includes regex fixes for "For", "Teeth")
+            # 2. Group OCR tokens (includes regex fixes for "For", "Teeth", "Diameter")
             grouped_ocr = self._group_ocr(raw_ocr)
             
             # === NEW: Center-Weighting Strategy ===
             # Sort groups by distance to the center (500, 500)
-            # This ensures we pick the text the user actually clicked on, 
-            # even if padding captured neighbor text.
+            # This ensures we pick the text the user actually clicked on.
             grouped_ocr.sort(key=self._calculate_distance_to_center)
             
             debug_info["ocr_grouped"] = [d.text for d in grouped_ocr]
@@ -138,9 +137,10 @@ class RegionDetectionService:
         Ignore other dimensions that might be visible at the edges.
 
         Rules:
-        1. Output ONE value: "0.250", "4X 0.50", "21 Teeth", "For 1/8" Width"
+        1. Output ONE value: "0.250", "4X 0.50", "21 Teeth", "For 1/8" Width", "0.500 Pitch Diameter"
         2. Keep modifiers (4X, TYP, For) and units (in, mm, ") attached.
-        3. If multiple numbers exist, pick the one in the visual center.
+        3. Keep descriptions like "Pitch Diameter", "Major Dia", "Thread" attached.
+        4. If multiple numbers exist, pick the one in the visual center.
 
         Return JSON: {"dimension": "VALUE", "confidence": 0.9}"""
 
@@ -163,7 +163,7 @@ class RegionDetectionService:
             return data.get("dimension")
         except: return None
 
-    # ===== UPDATED GROUPING LOGIC (Ported from Full Page Service) =====
+    # ===== UPDATED GROUPING LOGIC (With Fixes for Pitch Diameter) =====
     
     def _group_ocr(self, detections: List[OCRDetection]) -> List[OCRDetection]:
         if not detections: return []
@@ -234,9 +234,15 @@ class RegionDetectionService:
         # Fix: "0.160in" + "For"
         if self._looks_like_dimension(prev) and curr.lower().startswith('for'): return True
         
-        # Fix: "21" + "Teeth"
+        # Fix: "21" + "Teeth" or "Places"
         if prev.isdigit() and re.match(r'^(?:Teeth|Tooth|Pitch|Places|Plcs|Holes|Slots)$', curr, re.IGNORECASE): return True
         
+        # Fix: "Pitch" + "Diameter" (Added Diameter, Major, Minor)
+        if re.match(r'^(?:x|X|×|Wd\.?|Lg\.?|Key|OD|ID|Pitch|Teeth|Diameter|Dia\.?|Major|Minor)$', curr, re.IGNORECASE):
+            return True
+        if prev.lower() in ['x', 'wd', 'lg', 'pitch', 'teeth', 'diameter', 'dia', 'major', 'minor']:
+            return True
+
         # Fraction parts
         if prev.isdigit() and re.match(r'^\d+/\d+["\']?$', curr): return True
         
@@ -246,9 +252,9 @@ class RegionDetectionService:
         # Tolerance
         if PATTERNS.is_tolerance(curr): return True
         
-        # Connectors
-        if re.match(r'^(?:x|X|Wd|Lg|Key|OD|ID)$', curr, re.IGNORECASE): return True
-        if prev.lower() in ['x', 'wd', 'lg']: return True
+        # Continuation chars
+        if curr in ['-', '/', '(', ')', ':']: return True
+        if prev in ['-', '/', ':', 'For', 'for']: return True
         
         # Small gap simple merge
         if gap <= 25: return True
@@ -259,8 +265,8 @@ class RegionDetectionService:
         # Tolerance below
         if PATTERNS.is_tolerance(lower): return True
         
-        # Fix: Descriptive labels below
-        if re.match(r'^(?:Flange|Tube|OD|ID|Pipe|Thread|Pitch|Teeth|For|Max|Min|Typ)$', lower, re.IGNORECASE): return True
+        # Fix: Descriptive labels below (Added Diameter, Major, Minor)
+        if re.match(r'^(?:Flange|Tube|OD|ID|Pipe|Thread|Pitch|Teeth|For|Max|Min|Typ|Diameter|Dia\.?|Major|Minor)$', lower, re.IGNORECASE): return True
         
         return False
 
