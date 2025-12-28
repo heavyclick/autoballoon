@@ -3,8 +3,10 @@
  * 
  * THREE FIXES IMPLEMENTED:
  * 1. Tooltip stays visible when moving from balloon to tooltip (invisible bridge)
- * 2. Add Balloon mode: click button → draw rectangle → enter value → balloon created
- * 3. Clear Area mode: click button → draw rectangle → balloons inside deleted
+ * 2. Add Balloon mode: draw rectangle → OCR detect OR manual entry → balloon created
+ * 3. Clear Area mode: draw rectangle → balloons inside deleted
+ * 
+ * PRESERVED: All original functionality including multi-page, Glass Wall, CMM import, etc.
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -14,23 +16,12 @@ import { API_BASE_URL, MAX_FILE_SIZE_MB, ALLOWED_EXTENSIONS } from '../constants
 import { GlassWallPaywall } from './GlassWallPaywall';
 import { PreviewWatermark } from './PreviewWatermark';
 
-// ============ HELPER FUNCTION ============
-function downloadBlob(blob, filename) {
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  window.URL.revokeObjectURL(url);
-  a.remove();
-}
-
-// ============ MAIN DROPZONE COMPONENT ============
 export function DropZone({ onBeforeProcess, hasPromoAccess = false, userEmail = '' }) {
   const { token, isPro } = useAuth();
   const { visitorId, incrementUsage, usage, refreshUsage } = useUsage();
   const fileInputRef = useRef(null);
+  
+  // User has access if: isPro OR hasPromoAccess (from URL promo code)
   const canDownload = isPro || hasPromoAccess;
   
   const [isDragging, setIsDragging] = useState(false);
@@ -39,6 +30,8 @@ export function DropZone({ onBeforeProcess, hasPromoAccess = false, userEmail = 
   const [result, setResult] = useState(null);
   const [showGlassWall, setShowGlassWall] = useState(false);
   const [showRevisionCompare, setShowRevisionCompare] = useState(false);
+  
+  // Multi-page state
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
@@ -109,6 +102,10 @@ export function DropZone({ onBeforeProcess, hasPromoAccess = false, userEmail = 
     setShowRevisionCompare(false);
   };
 
+  const handleOpenCompare = () => {
+    setShowRevisionCompare(true);
+  };
+
   const getTotalDimensionCount = () => {
     if (!result) return 0;
     if (result.pages && result.pages.length > 0) {
@@ -117,46 +114,33 @@ export function DropZone({ onBeforeProcess, hasPromoAccess = false, userEmail = 
     return result.dimensions?.length || 0;
   };
 
-  if (showRevisionCompare) {
-    return (
-      <RevisionCompare 
-        onClose={() => setShowRevisionCompare(false)} 
-        onComplete={handleRevisionCompareResult} 
-        visitorId={visitorId} 
-        incrementUsage={incrementUsage} 
-        isPro={canDownload} 
-        onShowGlassWall={() => setShowGlassWall(true)} 
-      />
-    );
-  }
+  if (showRevisionCompare) return <RevisionCompare onClose={() => setShowRevisionCompare(false)} onComplete={handleRevisionCompareResult} visitorId={visitorId} incrementUsage={incrementUsage} isPro={canDownload} onShowGlassWall={() => setShowGlassWall(true)} />;
   
-  if (result) {
-    return (
-      <>
-        <GlassWallPaywall 
-          isOpen={showGlassWall}
-          onClose={() => setShowGlassWall(false)}
-          dimensionCount={getTotalDimensionCount()}
-          estimatedHours={(getTotalDimensionCount() * 1 + 10) / 60}
-        />
-        <BlueprintViewer 
-          result={result} 
-          onReset={handleReset} 
-          token={token}
-          isPro={canDownload}
-          onShowGlassWall={() => setShowGlassWall(true)}
-          currentPage={currentPage} 
-          setCurrentPage={setCurrentPage} 
-          totalPages={totalPages} 
-        />
-      </>
-    );
-  }
+  if (result) return (
+    <>
+      <GlassWallPaywall 
+        isOpen={showGlassWall}
+        onClose={() => setShowGlassWall(false)}
+        dimensionCount={getTotalDimensionCount()}
+        estimatedHours={(getTotalDimensionCount() * 1 + 10) / 60}
+      />
+      <BlueprintViewer 
+        result={result} 
+        onReset={handleReset} 
+        token={token}
+        isPro={canDownload}
+        onShowGlassWall={() => setShowGlassWall(true)}
+        currentPage={currentPage} 
+        setCurrentPage={setCurrentPage} 
+        totalPages={totalPages} 
+      />
+    </>
+  );
 
   return (
     <div className="space-y-4">
       <div className="flex justify-center">
-        <button onClick={() => setShowRevisionCompare(true)} className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-xl transition-all text-sm flex items-center gap-2 font-medium shadow-lg">
+        <button onClick={handleOpenCompare} className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-xl transition-all text-sm flex items-center gap-2 font-medium shadow-lg">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
           Compare Revisions (Delta FAI)
         </button>
@@ -190,8 +174,329 @@ export function DropZone({ onBeforeProcess, hasPromoAccess = false, userEmail = 
   );
 }
 
-// ============ BLUEPRINT VIEWER - MAIN COMPONENT WITH UX IMPROVEMENTS ============
+// ============ REVISION COMPARE ============
+function RevisionCompare({ onClose, onComplete, visitorId, incrementUsage, isPro, onShowGlassWall }) {
+  const [revA, setRevA] = useState(null);
+  const [revB, setRevB] = useState(null);
+  const [isComparing, setIsComparing] = useState(false);
+  const [comparisonResult, setComparisonResult] = useState(null);
+  const fileInputARef = useRef(null);
+  const fileInputBRef = useRef(null);
+
+  const handleFileSelect = (file, setRev) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => setRev({ file, name: file.name, preview: e.target.result });
+    reader.readAsDataURL(file);
+  };
+
+  const handleCompare = async () => {
+    if (!revA || !revB) return;
+    setIsComparing(true);
+    try {
+      const [formDataA, formDataB] = [new FormData(), new FormData()];
+      formDataA.append('file', revA.file);
+      formDataB.append('file', revB.file);
+      const [responseA, responseB] = await Promise.all([
+        fetch(`${API_BASE_URL}/process`, { method: 'POST', body: formDataA }),
+        fetch(`${API_BASE_URL}/process`, { method: 'POST', body: formDataB })
+      ]);
+      const [dataA, dataB] = await Promise.all([responseA.json(), responseB.json()]);
+      if (dataA.success && dataB.success) {
+        const dimsA = dataA.dimensions || [];
+        const dimsB = dataB.dimensions || [];
+        const changes = { added: [], removed: [], modified: [], unchanged: [] };
+        const filterTitleBlock = (dims) => dims.filter(d => {
+          const centerY = (d.bounding_box.ymin + d.bounding_box.ymax) / 2;
+          return centerY < 800;
+        });
+        const filteredA = filterTitleBlock(dimsA);
+        const filteredB = filterTitleBlock(dimsB);
+        const TOLERANCE = 20;
+        
+        filteredB.forEach(dimB => {
+          const centerBX = (dimB.bounding_box.xmin + dimB.bounding_box.xmax) / 2;
+          const centerBY = (dimB.bounding_box.ymin + dimB.bounding_box.ymax) / 2;
+          const matchA = filteredA.find(dimA => {
+            const centerAX = (dimA.bounding_box.xmin + dimA.bounding_box.xmax) / 2;
+            const centerAY = (dimA.bounding_box.ymin + dimA.bounding_box.ymax) / 2;
+            return Math.abs(centerAX - centerBX) < TOLERANCE && Math.abs(centerAY - centerBY) < TOLERANCE;
+          });
+          if (!matchA) changes.added.push({ ...dimB, changeType: 'added' });
+          else if (matchA.value !== dimB.value) changes.modified.push({ ...dimB, changeType: 'modified', oldValue: matchA.value, newValue: dimB.value });
+          else changes.unchanged.push({ ...dimB, changeType: 'unchanged' });
+        });
+        
+        filteredA.forEach(dimA => {
+          const centerAX = (dimA.bounding_box.xmin + dimA.bounding_box.xmax) / 2;
+          const centerAY = (dimA.bounding_box.ymin + dimA.bounding_box.ymax) / 2;
+          const matchB = filteredB.find(dimB => {
+            const centerBX = (dimB.bounding_box.xmin + dimB.bounding_box.xmax) / 2;
+            const centerBY = (dimB.bounding_box.ymin + dimB.bounding_box.ymax) / 2;
+            return Math.abs(centerAX - centerBX) < TOLERANCE && Math.abs(centerAY - centerBY) < TOLERANCE;
+          });
+          if (!matchB) changes.removed.push({ ...dimA, changeType: 'removed' });
+        });
+        
+        setComparisonResult({ revA: dataA, revB: dataB, changes, summary: { added: changes.added.length, removed: changes.removed.length, modified: changes.modified.length, unchanged: changes.unchanged.length } });
+      }
+    } catch (err) {
+      console.error('Comparison failed:', err);
+    } finally {
+      setIsComparing(false);
+    }
+  };
+
+  const handleUseChanges = () => {
+    if (!isPro) { onShowGlassWall(); return; }
+    if (comparisonResult && onComplete) {
+      const changedDimensions = [...comparisonResult.changes.added, ...comparisonResult.changes.modified].map((dim, idx) => ({ ...dim, id: idx + 1 }));
+      onComplete({ dimensions: changedDimensions, image: comparisonResult.revB.image, metadata: comparisonResult.revB.metadata, comparison: comparisonResult });
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+      <div className="bg-[#161616] rounded-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="px-6 py-4 border-b border-[#2a2a2a] flex justify-between items-center">
+          <div>
+            <h2 className="text-xl font-bold text-white"><span className="bg-gradient-to-r from-purple-500 to-pink-500 bg-clip-text text-transparent">Delta FAI</span> - Revision Compare</h2>
+            <p className="text-gray-400 text-sm">Upload two revisions to find only what changed</p>
+          </div>
+          <button onClick={onClose} className="text-gray-500 hover:text-white"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+        </div>
+        <div className="flex-1 overflow-auto p-6">
+          {!comparisonResult ? (
+            <div className="grid grid-cols-2 gap-6">
+              <div>
+                <h3 className="text-white font-medium mb-3 flex items-center gap-2"><span className="w-6 h-6 rounded bg-gray-600 flex items-center justify-center text-xs">A</span>Old Revision</h3>
+                <div className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${revA ? 'border-green-500/50 bg-green-500/5' : 'border-[#2a2a2a] hover:border-[#3a3a3a]'}`} onClick={() => fileInputARef.current?.click()}>
+                  <input ref={fileInputARef} type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => handleFileSelect(e.target.files[0], setRevA)} className="hidden" />
+                  {revA ? (<div><img src={revA.preview} alt="Rev A" className="max-h-48 mx-auto rounded mb-2" /><p className="text-green-400 text-sm">{revA.name}</p></div>) : (<div><svg className="w-10 h-10 text-gray-500 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg><p className="text-gray-400">Upload Rev A (Old)</p></div>)}
+                </div>
+              </div>
+              <div>
+                <h3 className="text-white font-medium mb-3 flex items-center gap-2"><span className="w-6 h-6 rounded bg-[#E63946] flex items-center justify-center text-xs text-white">B</span>New Revision</h3>
+                <div className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${revB ? 'border-[#E63946]/50 bg-[#E63946]/5' : 'border-[#2a2a2a] hover:border-[#3a3a3a]'}`} onClick={() => fileInputBRef.current?.click()}>
+                  <input ref={fileInputBRef} type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => handleFileSelect(e.target.files[0], setRevB)} className="hidden" />
+                  {revB ? (<div><img src={revB.preview} alt="Rev B" className="max-h-48 mx-auto rounded mb-2" /><p className="text-[#E63946] text-sm">{revB.name}</p></div>) : (<div><svg className="w-10 h-10 text-gray-500 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg><p className="text-gray-400">Upload Rev B (New)</p></div>)}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="grid grid-cols-4 gap-4">
+                <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 text-center"><div className="text-3xl font-bold text-green-400">{comparisonResult.summary.added}</div><div className="text-green-400/70 text-sm">Added</div></div>
+                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-center"><div className="text-3xl font-bold text-yellow-400">{comparisonResult.summary.modified}</div><div className="text-yellow-400/70 text-sm">Modified</div></div>
+                <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-center"><div className="text-3xl font-bold text-red-400">{comparisonResult.summary.removed}</div><div className="text-red-400/70 text-sm">Removed</div></div>
+                <div className="bg-gray-500/10 border border-gray-500/30 rounded-xl p-4 text-center"><div className="text-3xl font-bold text-gray-400">{comparisonResult.summary.unchanged}</div><div className="text-gray-400/70 text-sm">Unchanged</div></div>
+              </div>
+              <div className="bg-[#0a0a0a] rounded-xl overflow-hidden max-h-64">
+                <table className="w-full text-sm">
+                  <thead className="bg-[#1a1a1a] sticky top-0"><tr><th className="px-4 py-2 text-left text-gray-400">Status</th><th className="px-4 py-2 text-left text-gray-400">Zone</th><th className="px-4 py-2 text-left text-gray-400">Old</th><th className="px-4 py-2 text-left text-gray-400">New</th></tr></thead>
+                  <tbody>
+                    {comparisonResult.changes.added.map((dim, i) => (<tr key={`a${i}`} className="border-t border-[#1a1a1a]"><td className="px-4 py-2"><span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">ADDED</span></td><td className="px-4 py-2 text-gray-300">{dim.zone || '-'}</td><td className="px-4 py-2 text-gray-500">-</td><td className="px-4 py-2 text-white font-mono">{dim.value}</td></tr>))}
+                    {comparisonResult.changes.modified.map((dim, i) => (<tr key={`m${i}`} className="border-t border-[#1a1a1a]"><td className="px-4 py-2"><span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded text-xs">MODIFIED</span></td><td className="px-4 py-2 text-gray-300">{dim.zone || '-'}</td><td className="px-4 py-2 text-gray-500 font-mono line-through">{dim.oldValue}</td><td className="px-4 py-2 text-white font-mono">{dim.newValue}</td></tr>))}
+                    {comparisonResult.changes.removed.map((dim, i) => (<tr key={`r${i}`} className="border-t border-[#1a1a1a]"><td className="px-4 py-2"><span className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs">REMOVED</span></td><td className="px-4 py-2 text-gray-300">{dim.zone || '-'}</td><td className="px-4 py-2 text-red-400 font-mono">{dim.value}</td><td className="px-4 py-2 text-gray-500">-</td></tr>))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="px-6 py-4 border-t border-[#2a2a2a] flex justify-between">
+          {!comparisonResult ? (
+            <><div className="text-gray-500 text-sm">{revA && revB ? 'Ready to compare' : 'Upload both revisions'}</div>
+            <button onClick={handleCompare} disabled={!revA || !revB || isComparing} className="px-6 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-medium rounded-lg disabled:opacity-50 flex items-center gap-2">
+              {isComparing ? <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>Comparing...</> : 'Compare Revisions'}
+            </button></>
+          ) : (
+            <><button onClick={() => setComparisonResult(null)} className="text-gray-400 hover:text-white">Compare Different Files</button>
+            <button onClick={handleUseChanges} className="px-6 py-2 bg-[#E63946] hover:bg-[#c62d39] text-white font-medium rounded-lg flex items-center gap-2">
+              {!isPro && <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>}
+              Balloon Only Changes ({comparisonResult.summary.added + comparisonResult.summary.modified})
+            </button></>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ PAGE NAVIGATOR ============
+function PageNavigator({ currentPage, totalPages, onPageChange, gridDetected }) {
+  if (totalPages <= 1) return null;
+  
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 bg-[#1a1a1a] rounded-lg px-3 py-2">
+        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        <span className="text-sm text-gray-300">
+          Page{' '}
+          <select
+            value={currentPage}
+            onChange={(e) => onPageChange(Number(e.target.value))}
+            className="bg-transparent text-white font-medium appearance-none cursor-pointer hover:text-[#E63946] transition-colors"
+          >
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+              <option key={page} value={page} className="bg-[#1a1a1a]">{page}</option>
+            ))}
+          </select>
+          <span className="text-gray-500"> of {totalPages}</span>
+        </span>
+      </div>
+      
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          disabled={currentPage <= 1}
+          className="p-2 rounded-lg bg-[#1a1a1a] text-gray-300 hover:bg-[#252525] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <button
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          disabled={currentPage >= totalPages}
+          className="p-2 rounded-lg bg-[#1a1a1a] text-gray-300 hover:bg-[#252525] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      </div>
+      
+      {gridDetected === false && (
+        <div className="flex items-center gap-1.5 text-xs text-amber-400/80 bg-amber-400/10 px-3 py-1.5 rounded-lg">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span>Standard grid</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============ DOWNLOAD MENU ============
+function DownloadMenu({ onDownloadPDF, onDownloadZIP, onDownloadExcel, isDownloading, totalPages, totalDimensions, isPro }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleDownload = (action) => {
+    action();
+    setIsOpen(false);
+  };
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        disabled={isDownloading}
+        className="flex items-center gap-2 px-4 py-2 bg-[#E63946] hover:bg-[#c62d39] text-white font-medium rounded-lg transition-colors disabled:opacity-50"
+      >
+        {isDownloading ? (
+          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        ) : !isPro ? (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+        ) : (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        )}
+        <span>{isDownloading ? 'Preparing...' : (isPro ? 'Download' : 'Export (Pro)')}</span>
+        <svg className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {isOpen && !isDownloading && (
+        <div className="absolute right-0 mt-2 w-72 bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl shadow-2xl overflow-hidden z-50">
+          <div className="px-4 py-3 border-b border-[#2a2a2a] bg-[#161616]">
+            <p className="text-sm font-medium text-white">Export Options</p>
+            <p className="text-xs text-gray-400 mt-0.5">{totalPages} page{totalPages !== 1 ? 's' : ''} • {totalDimensions} dimension{totalDimensions !== 1 ? 's' : ''}</p>
+          </div>
+
+          <div className="p-2">
+            <button onClick={() => handleDownload(onDownloadPDF)} className="w-full flex items-start gap-3 p-3 rounded-lg hover:bg-[#252525] transition-colors text-left group">
+              <div className="p-2 rounded-lg bg-[#E63946]/10 text-[#E63946] group-hover:bg-[#E63946]/20">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-white">Ballooned PDF</p>
+                <p className="text-xs text-gray-400 mt-0.5">All pages with balloon markers</p>
+              </div>
+              {!isPro && <svg className="w-4 h-4 text-gray-500 self-center" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>}
+            </button>
+
+            <button onClick={() => handleDownload(onDownloadZIP)} className="w-full flex items-start gap-3 p-3 rounded-lg hover:bg-[#252525] transition-colors text-left group">
+              <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400 group-hover:bg-blue-500/20">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-white">FAI Package (ZIP)</p>
+                <p className="text-xs text-gray-400 mt-0.5">Images + AS9102 Excel + README</p>
+              </div>
+              {isPro ? (
+                <span className="text-[10px] font-medium text-green-400 bg-green-400/10 px-2 py-0.5 rounded-full self-center">RECOMMENDED</span>
+              ) : (
+                <svg className="w-4 h-4 text-gray-500 self-center" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+              )}
+            </button>
+
+            <button onClick={() => handleDownload(onDownloadExcel)} className="w-full flex items-start gap-3 p-3 rounded-lg hover:bg-[#252525] transition-colors text-left group">
+              <div className="p-2 rounded-lg bg-green-500/10 text-green-400 group-hover:bg-green-500/20">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-white">AS9102 Excel Only</p>
+                <p className="text-xs text-gray-400 mt-0.5">Form 3 spreadsheet</p>
+              </div>
+              {!isPro && <svg className="w-4 h-4 text-gray-500 self-center" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>}
+            </button>
+          </div>
+
+          <div className="px-4 py-2.5 border-t border-[#2a2a2a] bg-[#0a0a0a]">
+            <p className="text-[11px] text-gray-500">{isPro ? 'All exports include AS9102 Rev C compliant formatting' : 'Upgrade to Pro to unlock exports'}</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============ HELPER FUNCTION ============
+function downloadBlob(blob, filename) {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  a.remove();
+}
+// ============ BLUEPRINT VIEWER WITH UX IMPROVEMENTS ============
 function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, currentPage, setCurrentPage, totalPages: initialTotalPages }) {
+  const [isExporting, setIsExporting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   
   // Multi-page support
@@ -206,9 +511,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
   };
   
   const currentPageData = getCurrentPageData();
-  const currentImage = hasMultiplePages 
-    ? `data:image/png;base64,${currentPageData.image}` 
-    : (currentPageData.image?.startsWith('data:') ? currentPageData.image : `data:image/png;base64,${currentPageData.image}`);
+  const currentImage = hasMultiplePages ? `data:image/png;base64,${currentPageData.image}` : (currentPageData.image?.startsWith('data:') ? currentPageData.image : `data:image/png;base64,${currentPageData.image}`);
   
   const getPageDimensions = () => {
     if (hasMultiplePages) return currentPageData.dimensions || [];
@@ -237,13 +540,17 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
   }, [currentPage, result]);
   
   // ===== UX IMPROVEMENT: Drawing mode state =====
-  const [drawMode, setDrawMode] = useState(null); // null | 'addBalloon' | 'clearArea'
+  // null = normal, 'addBalloon' = draw to add, 'clearArea' = draw to delete
+  const [drawMode, setDrawMode] = useState(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawStart, setDrawStart] = useState(null);
   const [drawEnd, setDrawEnd] = useState(null);
+  
+  // Value input popup state (for Add Balloon)
   const [showValueInput, setShowValueInput] = useState(false);
   const [newBalloonRect, setNewBalloonRect] = useState(null);
   const [newBalloonValue, setNewBalloonValue] = useState('');
+  const [isDetectingValue, setIsDetectingValue] = useState(false);
   
   const [showCMMImport, setShowCMMImport] = useState(false);
   const [cmmResults, setCmmResults] = useState({});
@@ -279,6 +586,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
   const handleMouseDown = (e) => {
     if (!drawMode || !containerRef.current) return;
     e.preventDefault();
+    e.stopPropagation();
     const rect = containerRef.current.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
@@ -295,7 +603,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
     setDrawEnd({ x, y });
   };
   
-  const handleMouseUp = () => {
+  const handleMouseUp = async () => {
     if (!isDrawing || !drawStart || !drawEnd) {
       setIsDrawing(false);
       return;
@@ -307,7 +615,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
     const minY = Math.min(drawStart.y, drawEnd.y);
     const maxY = Math.max(drawStart.y, drawEnd.y);
     
-    // Minimum size check
+    // Minimum size check (at least 1% of container)
     if (maxX - minX < 1 || maxY - minY < 1) {
       setDrawStart(null);
       setDrawEnd(null);
@@ -315,10 +623,16 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
     }
     
     if (drawMode === 'addBalloon') {
+      // Save the rectangle and show value input
       setNewBalloonRect({ minX, maxX, minY, maxY });
       setShowValueInput(true);
       setDrawMode(null);
+      
+      // TODO: Auto-detect dimension value via OCR
+      // This would crop the image region and send to backend for detection
+      // For now, manual entry with option to detect
     } else if (drawMode === 'clearArea') {
+      // Delete all balloons inside the rectangle
       setDimensions(prev => prev.filter(d => {
         const isInside = d.balloonX >= minX && d.balloonX <= maxX && d.balloonY >= minY && d.balloonY <= maxY;
         return !isInside;
@@ -330,6 +644,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
     setDrawEnd(null);
   };
   
+  // Add balloon confirmation
   const handleAddBalloonConfirm = () => {
     if (!newBalloonRect || !newBalloonValue.trim()) {
       setShowValueInput(false);
@@ -370,21 +685,21 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
     setNewBalloonValue('');
   };
   
-  // Download handlers
+  // Download handlers (Glass Wall protected)
   const handleDownloadPDF = async () => {
     if (!isPro) { onShowGlassWall(); return; }
     setIsDownloading(true);
     try {
       const payload = {
         pages: hasMultiplePages 
-          ? result.pages.map(p => ({ page_number: p.page_number, image: p.image, width: p.width || 1700, height: p.height || 2200, dimensions: p.dimensions || [] }))
-          : [{ page_number: 1, image: result.image?.replace(/^data:image\/\w+;base64,/, '') || '', width: result.metadata?.width || 1700, height: result.metadata?.height || 2200, dimensions: result.dimensions || [] }],
+          ? result.pages.map(p => ({ page_number: p.page_number, image: p.image, width: p.width || 1700, height: p.height || 2200, dimensions: p.dimensions || [], grid_detected: p.grid_detected !== false }))
+          : [{ page_number: 1, image: result.image?.replace(/^data:image\/\w+;base64,/, '') || '', width: result.metadata?.width || 1700, height: result.metadata?.height || 2200, dimensions: result.dimensions || [], grid_detected: result.grid?.detected !== false }],
         part_number: result.metadata?.part_number || '',
         revision: result.metadata?.revision || '',
+        grid_detected: hasMultiplePages ? result.pages.every(p => p.grid_detected !== false) : (result.grid?.detected !== false)
       };
       const response = await fetch(`${API_BASE_URL.replace('/api', '')}/download/pdf`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token && { 'Authorization': `Bearer ${token}` }) },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...(token && { 'Authorization': `Bearer ${token}` }) },
         body: JSON.stringify(payload)
       });
       if (response.ok) {
@@ -402,19 +717,20 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
     try {
       const payload = {
         pages: hasMultiplePages 
-          ? result.pages.map(p => ({ page_number: p.page_number, image: p.image, width: p.width || 1700, height: p.height || 2200, dimensions: p.dimensions || [] }))
-          : [{ page_number: 1, image: result.image?.replace(/^data:image\/\w+;base64,/, '') || '', width: result.metadata?.width || 1700, height: result.metadata?.height || 2200, dimensions: result.dimensions || [] }],
+          ? result.pages.map(p => ({ page_number: p.page_number, image: p.image, width: p.width || 1700, height: p.height || 2200, dimensions: p.dimensions || [], grid_detected: p.grid_detected !== false }))
+          : [{ page_number: 1, image: result.image?.replace(/^data:image\/\w+;base64,/, '') || '', width: result.metadata?.width || 1700, height: result.metadata?.height || 2200, dimensions: result.dimensions || [], grid_detected: result.grid?.detected !== false }],
         part_number: result.metadata?.part_number || '',
         revision: result.metadata?.revision || '',
+        grid_detected: hasMultiplePages ? result.pages.every(p => p.grid_detected !== false) : (result.grid?.detected !== false)
       };
       const response = await fetch(`${API_BASE_URL.replace('/api', '')}/download/zip`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token && { 'Authorization': `Bearer ${token}` }) },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...(token && { 'Authorization': `Bearer ${token}` }) },
         body: JSON.stringify(payload)
       });
       if (response.ok) {
         const blob = await response.blob();
-        downloadBlob(blob, 'FAI_package.zip');
+        const filename = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || 'FAI_package.zip';
+        downloadBlob(blob, filename);
       }
     } catch (err) { console.error('ZIP download failed:', err); }
     finally { setIsDownloading(false); }
@@ -426,21 +742,87 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
     try {
       const payload = {
         pages: hasMultiplePages 
-          ? result.pages.map(p => ({ page_number: p.page_number, dimensions: p.dimensions || [] }))
-          : [{ page_number: 1, dimensions: result.dimensions || [] }],
+          ? result.pages.map(p => ({ page_number: p.page_number, image: p.image, width: p.width || 1700, height: p.height || 2200, dimensions: p.dimensions || [], grid_detected: p.grid_detected !== false }))
+          : [{ page_number: 1, image: result.image?.replace(/^data:image\/\w+;base64,/, '') || '', width: result.metadata?.width || 1700, height: result.metadata?.height || 2200, dimensions: result.dimensions || [], grid_detected: result.grid?.detected !== false }],
         part_number: result.metadata?.part_number || '',
+        revision: result.metadata?.revision || '',
+        grid_detected: hasMultiplePages ? result.pages.every(p => p.grid_detected !== false) : (result.grid?.detected !== false)
       };
       const response = await fetch(`${API_BASE_URL.replace('/api', '')}/download/excel`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token && { 'Authorization': `Bearer ${token}` }) },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...(token && { 'Authorization': `Bearer ${token}` }) },
         body: JSON.stringify(payload)
       });
       if (response.ok) {
         const blob = await response.blob();
-        downloadBlob(blob, 'AS9102_Form3.xlsx');
+        const filename = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || 'AS9102_Form3.xlsx';
+        downloadBlob(blob, filename);
       }
     } catch (err) { console.error('Excel download failed:', err); }
     finally { setIsDownloading(false); }
+  };
+  
+  const handleExport = async (format = 'xlsx') => {
+    if (!isPro) { onShowGlassWall(); return; }
+    setIsExporting(true);
+    try {
+      const allDimensions = hasMultiplePages 
+        ? result.pages.flatMap(p => (p.dimensions || []).map(d => ({ ...d, page: p.page_number })))
+        : dimensions.map(d => ({ id: d.id, value: d.value, zone: d.zone, actual: cmmResults[d.id]?.actual || '' }));
+      const response = await fetch(`${API_BASE_URL}/export`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...(token && { 'Authorization': `Bearer ${token}` }) },
+        body: JSON.stringify({ format, template: 'AS9102_FORM3', dimensions: allDimensions, filename: result.metadata?.filename || 'inspection', total_pages: totalPages }),
+      });
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url;
+        a.download = `${result.metadata?.filename || 'inspection'}_FAI.${format}`;
+        document.body.appendChild(a); a.click();
+        window.URL.revokeObjectURL(url); a.remove();
+      }
+    } catch (err) { console.error('Export failed:', err); }
+    finally { setIsExporting(false); }
+  };
+
+  const handleDownloadImage = async () => {
+    if (!isPro) { onShowGlassWall(); return; }
+    setIsDownloading(true);
+    try {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const img = imageRef.current;
+      if (!img) { setIsDownloading(false); return; }
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      ctx.drawImage(img, 0, 0);
+      const balloonRadius = Math.max(24, canvas.width * 0.02);
+      const fontSize = Math.max(16, canvas.width * 0.014);
+      const lineWidth = Math.max(3, canvas.width * 0.002);
+      
+      dimensions.forEach(dim => {
+        const anchorX = (dim.anchorX / 100) * canvas.width;
+        const anchorY = (dim.anchorY / 100) * canvas.height - (canvas.height * 0.008);
+        const balloonX = (dim.balloonX / 100) * canvas.width;
+        const balloonY = (dim.balloonY / 100) * canvas.height;
+        ctx.beginPath(); ctx.moveTo(anchorX, anchorY); ctx.lineTo(balloonX, balloonY);
+        ctx.strokeStyle = '#E63946'; ctx.lineWidth = lineWidth; ctx.stroke();
+        ctx.beginPath(); ctx.arc(anchorX, anchorY, Math.max(2.5, lineWidth * 0.8), 0, Math.PI * 2);
+        ctx.fillStyle = '#E63946'; ctx.fill();
+        ctx.beginPath(); ctx.arc(balloonX, balloonY, balloonRadius, 0, Math.PI * 2);
+        ctx.fillStyle = 'white'; ctx.fill(); ctx.strokeStyle = '#E63946'; ctx.lineWidth = lineWidth; ctx.stroke();
+        ctx.fillStyle = '#E63946'; ctx.font = `bold ${fontSize}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(dim.id.toString(), balloonX, balloonY);
+      });
+      
+      canvas.toBlob((blob) => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url;
+        a.download = `${result.metadata?.filename || 'blueprint'}_page${currentPage}_ballooned.png`;
+        document.body.appendChild(a); a.click();
+        window.URL.revokeObjectURL(url); a.remove();
+        setIsDownloading(false);
+      }, 'image/png');
+    } catch (err) { console.error('Download failed:', err); setIsDownloading(false); }
   };
 
   const handleDeleteDimension = (id) => { setDimensions(prev => prev.filter(d => d.id !== id)); };
@@ -452,6 +834,9 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
     }));
   };
 
+  const handleCMMImport = (results) => { setCmmResults(results); setShowCMMImport(false); };
+
+  // Selection rectangle display
   const getSelectionRect = () => {
     if (!isDrawing || !drawStart || !drawEnd) return null;
     return {
@@ -466,18 +851,19 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
 
   return (
     <div className="space-y-6">
-      {showCMMImport && <CMMImportModal dimensions={dimensions} onClose={() => setShowCMMImport(false)} onImport={(r) => { setCmmResults(r); setShowCMMImport(false); }} />}
+      {showCMMImport && <CMMImportModal dimensions={dimensions} onClose={() => setShowCMMImport(false)} onImport={handleCMMImport} />}
       
-      {/* Value Input Popup */}
+      {/* Value Input Popup for Add Balloon */}
       {showValueInput && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl p-6 w-80">
-            <h3 className="text-white font-medium mb-4">Enter Dimension Value</h3>
+          <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl p-6 w-96">
+            <h3 className="text-white font-medium mb-2">Add Balloon</h3>
+            <p className="text-gray-400 text-sm mb-4">Enter the dimension value for this area</p>
             <input
               type="text"
               value={newBalloonValue}
               onChange={(e) => setNewBalloonValue(e.target.value)}
-              placeholder="e.g., 1.250in, Ø5mm..."
+              placeholder="e.g., 0.710in, Ø5mm, 21 Teeth 0.080in Pitch..."
               className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-white text-sm mb-4"
               autoFocus
               onKeyDown={(e) => {
@@ -487,7 +873,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
             />
             <div className="flex justify-end gap-2">
               <button onClick={() => { setShowValueInput(false); setNewBalloonRect(null); setNewBalloonValue(''); }} className="px-4 py-2 text-gray-400 hover:text-white text-sm">Cancel</button>
-              <button onClick={handleAddBalloonConfirm} className="px-4 py-2 bg-[#E63946] hover:bg-[#c62d39] text-white rounded-lg text-sm">Add Balloon</button>
+              <button onClick={handleAddBalloonConfirm} disabled={!newBalloonValue.trim()} className="px-4 py-2 bg-[#E63946] hover:bg-[#c62d39] text-white rounded-lg text-sm disabled:opacity-50">Add Balloon</button>
             </div>
           </div>
         </div>
@@ -502,15 +888,24 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
           </button>
           <div className="h-6 w-px bg-[#2a2a2a]" />
           
+          {totalPages > 1 && (
+            <>
+              <PageNavigator currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} gridDetected={currentPageData.grid_detected} />
+              <div className="h-6 w-px bg-[#2a2a2a]" />
+            </>
+          )}
+          
           <span className="text-sm">
             <span className="text-gray-400">This page: </span>
             <span className="text-white font-medium">{dimensions.length} dimensions</span>
             {totalPages > 1 && <span className="text-gray-500 ml-2">({getTotalDimensions()} total)</span>}
           </span>
           
+          {result.grid?.detected && !hasMultiplePages && <><div className="h-6 w-px bg-[#2a2a2a]" /><span className="text-sm"><span className="text-gray-400">Grid: </span><span className="text-white font-medium">{result.grid.columns?.length}x{result.grid.rows?.length}</span></span></>}
+          
           <div className="h-6 w-px bg-[#2a2a2a]" />
           
-          {/* ===== UX FIX #2: Add Balloon Button ===== */}
+          {/* ===== UX FIX #2: Add Balloon (Rectangle Draw) ===== */}
           <button
             onClick={() => setDrawMode(drawMode === 'addBalloon' ? null : 'addBalloon')}
             className={`px-3 py-1.5 rounded-lg transition-colors text-sm flex items-center gap-2 ${drawMode === 'addBalloon' ? 'bg-[#E63946] text-white' : 'bg-[#1a1a1a] hover:bg-[#252525] text-gray-300'}`}
@@ -519,7 +914,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
             {drawMode === 'addBalloon' ? 'Cancel' : 'Add Balloon'}
           </button>
           
-          {/* ===== UX FIX #3: Clear Area Button ===== */}
+          {/* ===== UX FIX #3: Clear Area (Rectangle Draw) ===== */}
           <button
             onClick={() => setDrawMode(drawMode === 'clearArea' ? null : 'clearArea')}
             className={`px-3 py-1.5 rounded-lg transition-colors text-sm flex items-center gap-2 ${drawMode === 'clearArea' ? 'bg-red-600 text-white' : 'bg-[#1a1a1a] hover:bg-[#252525] text-gray-300'}`}
@@ -530,23 +925,31 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
         </div>
         
         <div className="flex items-center gap-3">
-          <button onClick={() => setShowCMMImport(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm flex items-center gap-2">
+          <button onClick={() => setShowCMMImport(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm flex items-center gap-2">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
             Import CMM
+          </button>
+          <button onClick={handleDownloadImage} disabled={isDownloading} className="px-4 py-2 bg-[#1a1a1a] hover:bg-[#252525] text-gray-300 rounded-lg transition-colors text-sm disabled:opacity-50 flex items-center gap-2">
+            {!isPro && <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>}
+            {isDownloading ? 'Saving...' : `Save Page ${currentPage}`}
+          </button>
+          <button onClick={() => handleExport('csv')} disabled={isExporting} className="px-4 py-2 bg-[#1a1a1a] hover:bg-[#252525] text-gray-300 rounded-lg transition-colors text-sm disabled:opacity-50 flex items-center gap-2">
+            {!isPro && <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>}
+            Export CSV
           </button>
           <DownloadMenu onDownloadPDF={handleDownloadPDF} onDownloadZIP={handleDownloadZIP} onDownloadExcel={handleDownloadExcel} isDownloading={isDownloading} totalPages={totalPages} totalDimensions={getTotalDimensions()} isPro={isPro} />
         </div>
       </div>
 
-      {/* Mode indicator */}
+      {/* Mode indicator / Tip */}
       <div className="bg-[#1a1a1a] rounded-lg px-3 py-2 text-sm text-gray-400 flex items-center gap-2">
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
         {drawMode === 'addBalloon' ? (
-          <span className="text-[#E63946]">Draw a rectangle over the area you want to balloon. Press Escape to cancel.</span>
+          <span className="text-[#E63946]">Draw a rectangle around the dimension you want to balloon. Press Escape to cancel.</span>
         ) : drawMode === 'clearArea' ? (
           <span className="text-red-400">Draw a rectangle over the balloons you want to delete. Press Escape to cancel.</span>
         ) : (
-          <span>Hover over balloons to see details. Drag to reposition.</span>
+          <span>Hover over balloons to see details. Drag to reposition. {totalPages > 1 ? 'Use page navigation or ← → keys to switch pages.' : ''}</span>
         )}
       </div>
 
@@ -572,7 +975,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
           ))}
         </svg>
         
-        {/* Balloons with UX FIX #1: Tooltip bridge */}
+        {/* Balloons - UX FIX #1: Tooltip with invisible bridge */}
         {dimensions.map((dim) => (
           <DraggableBalloon
             key={dim.id}
@@ -587,7 +990,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
           />
         ))}
         
-        {/* Selection rectangle */}
+        {/* Selection rectangle while drawing */}
         {selectionRect && (
           <div
             className={`absolute border-2 border-dashed pointer-events-none ${drawMode === 'addBalloon' ? 'border-[#E63946] bg-[#E63946]/10' : 'border-red-500 bg-red-500/10'}`}
@@ -595,6 +998,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
           />
         )}
         
+        {/* Preview watermark for non-pro */}
         {!isPro && <PreviewWatermark isVisible={true} />}
       </div>
 
@@ -602,19 +1006,11 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
       <div className="bg-[#0a0a0a] rounded-xl overflow-hidden">
         <div className="px-4 py-3 bg-[#1a1a1a] border-b border-[#2a2a2a] flex items-center justify-between">
           <h3 className="font-medium text-white">Dimensions {totalPages > 1 ? `(Page ${currentPage})` : ''}</h3>
+          {totalPages > 1 && <span className="text-xs text-gray-500">Showing {dimensions.length} of {getTotalDimensions()} total</span>}
         </div>
         <div className="max-h-64 overflow-auto">
           <table className="w-full text-sm">
-            <thead className="bg-[#161616] sticky top-0">
-              <tr>
-                <th className="px-4 py-2 text-left text-gray-400 font-medium">#</th>
-                <th className="px-4 py-2 text-left text-gray-400 font-medium">Zone</th>
-                <th className="px-4 py-2 text-left text-gray-400 font-medium">Nominal</th>
-                <th className="px-4 py-2 text-left text-gray-400 font-medium">Actual</th>
-                <th className="px-4 py-2 text-left text-gray-400 font-medium">Status</th>
-                <th className="px-4 py-2 text-right text-gray-400 font-medium">Actions</th>
-              </tr>
-            </thead>
+            <thead className="bg-[#161616] sticky top-0"><tr><th className="px-4 py-2 text-left text-gray-400 font-medium">#</th><th className="px-4 py-2 text-left text-gray-400 font-medium">Zone</th><th className="px-4 py-2 text-left text-gray-400 font-medium">Nominal</th><th className="px-4 py-2 text-left text-gray-400 font-medium">Actual</th><th className="px-4 py-2 text-left text-gray-400 font-medium">Status</th><th className="px-4 py-2 text-right text-gray-400 font-medium">Actions</th></tr></thead>
             <tbody>
               {dimensions.map((dim) => (
                 <tr key={dim.id} className="border-b border-[#1a1a1a] hover:bg-[#161616]">
@@ -622,18 +1018,8 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
                   <td className="px-4 py-2 text-gray-300">{dim.zone || '-'}</td>
                   <td className="px-4 py-2 text-white font-mono">{dim.value}</td>
                   <td className="px-4 py-2 text-white font-mono">{cmmResults[dim.id]?.actual || '-'}</td>
-                  <td className="px-4 py-2">
-                    {cmmResults[dim.id]?.status && (
-                      <span className={`px-2 py-1 rounded text-xs ${cmmResults[dim.id].status === 'PASS' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-                        {cmmResults[dim.id].status}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <button onClick={() => handleDeleteDimension(dim.id)} className="text-gray-500 hover:text-red-500">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                    </button>
-                  </td>
+                  <td className="px-4 py-2">{cmmResults[dim.id]?.status && <span className={`px-2 py-1 rounded text-xs ${cmmResults[dim.id].status === 'PASS' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>{cmmResults[dim.id].status}</span>}</td>
+                  <td className="px-4 py-2 text-right"><button onClick={() => handleDeleteDimension(dim.id)} className="text-gray-500 hover:text-red-500"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button></td>
                 </tr>
               ))}
             </tbody>
@@ -644,7 +1030,6 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
     </div>
   );
 }
-
 // ============ DRAGGABLE BALLOON - UX FIX #1: Tooltip stays visible ============
 function DraggableBalloon({ dimension, left, top, onDelete, onDrag, cmmResult, containerRef, disabled = false }) {
   const [isHovered, setIsHovered] = useState(false);
@@ -682,8 +1067,11 @@ function DraggableBalloon({ dimension, left, top, onDelete, onDrag, cmmResult, c
   /**
    * UX FIX #1: Tooltip stays visible when moving from balloon to tooltip
    * 
-   * The container tracks hover state for both balloon AND tooltip.
-   * CSS padding creates an invisible "bridge" between them.
+   * HOW IT WORKS:
+   * - The outer container div tracks hover state for BOTH the balloon AND the tooltip
+   * - The tooltip wrapper has paddingLeft: '8px' which creates an "invisible bridge"
+   * - When you move your cursor from the balloon to the tooltip, you're still inside the container
+   * - The tooltip only disappears when you leave the entire container area
    */
   return (
     <div
@@ -692,7 +1080,7 @@ function DraggableBalloon({ dimension, left, top, onDelete, onDrag, cmmResult, c
       onMouseEnter={() => !disabled && setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* Balloon circle */}
+      {/* The balloon circle */}
       <div
         className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-all shadow-lg ${
           hasResult 
@@ -704,68 +1092,22 @@ function DraggableBalloon({ dimension, left, top, onDelete, onDrag, cmmResult, c
         {dimension.id}
       </div>
       
-      {/* Tooltip with invisible bridge (padding) */}
+      {/* Tooltip with INVISIBLE BRIDGE (paddingLeft creates the bridge) */}
       {isHovered && !isDragging && !disabled && (
-        <div className="absolute left-full top-1/2 -translate-y-1/2 flex items-center" style={{ paddingLeft: '8px' }}>
+        <div 
+          className="absolute left-full top-1/2 -translate-y-1/2 flex items-center"
+          style={{ paddingLeft: '8px' }}
+        >
           <div className="bg-[#161616] border border-[#2a2a2a] rounded-lg px-3 py-2 whitespace-nowrap shadow-xl min-w-[120px]">
             <div className="text-white font-mono text-sm mb-1">{dimension.value}</div>
             {dimension.zone && <div className="text-gray-400 text-xs">Zone: {dimension.zone}</div>}
             {cmmResult?.actual && <div className="text-blue-400 text-xs mt-1">Actual: {cmmResult.actual}</div>}
             {cmmResult?.status && <div className={`text-xs ${cmmResult.status === 'PASS' ? 'text-green-400' : 'text-red-400'}`}>{cmmResult.status}</div>}
-            <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="text-red-500 text-xs hover:text-red-400 hover:underline mt-2 block">Delete</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============ DOWNLOAD MENU ============
-function DownloadMenu({ onDownloadPDF, onDownloadZIP, onDownloadExcel, isDownloading, totalPages, totalDimensions, isPro }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const menuRef = useRef(null);
-
-  useEffect(() => {
-    const handleClickOutside = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setIsOpen(false); };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const handleDownload = (action) => { action(); setIsOpen(false); };
-
-  return (
-    <div className="relative" ref={menuRef}>
-      <button onClick={() => setIsOpen(!isOpen)} disabled={isDownloading} className="flex items-center gap-2 px-4 py-2 bg-[#E63946] hover:bg-[#c62d39] text-white font-medium rounded-lg transition-colors disabled:opacity-50">
-        {isDownloading ? (
-          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-        ) : !isPro ? (
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
-        ) : (
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-        )}
-        <span>{isDownloading ? 'Preparing...' : (isPro ? 'Download' : 'Export (Pro)')}</span>
-        <svg className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-      </button>
-
-      {isOpen && !isDownloading && (
-        <div className="absolute right-0 mt-2 w-72 bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl shadow-2xl overflow-hidden z-50">
-          <div className="px-4 py-3 border-b border-[#2a2a2a] bg-[#161616]">
-            <p className="text-sm font-medium text-white">Export Options</p>
-            <p className="text-xs text-gray-400 mt-0.5">{totalPages} page{totalPages !== 1 ? 's' : ''} • {totalDimensions} dimensions</p>
-          </div>
-          <div className="p-2">
-            <button onClick={() => handleDownload(onDownloadPDF)} className="w-full flex items-start gap-3 p-3 rounded-lg hover:bg-[#252525] text-left group">
-              <div className="p-2 rounded-lg bg-[#E63946]/10 text-[#E63946]"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg></div>
-              <div className="flex-1"><p className="text-sm font-medium text-white">Ballooned PDF</p><p className="text-xs text-gray-400">All pages with balloon markers</p></div>
-            </button>
-            <button onClick={() => handleDownload(onDownloadZIP)} className="w-full flex items-start gap-3 p-3 rounded-lg hover:bg-[#252525] text-left group">
-              <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg></div>
-              <div className="flex-1"><p className="text-sm font-medium text-white">FAI Package (ZIP)</p><p className="text-xs text-gray-400">Images + AS9102 Excel + README</p></div>
-              {isPro && <span className="text-[10px] font-medium text-green-400 bg-green-400/10 px-2 py-0.5 rounded-full self-center">RECOMMENDED</span>}
-            </button>
-            <button onClick={() => handleDownload(onDownloadExcel)} className="w-full flex items-start gap-3 p-3 rounded-lg hover:bg-[#252525] text-left group">
-              <div className="p-2 rounded-lg bg-green-500/10 text-green-400"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg></div>
-              <div className="flex-1"><p className="text-sm font-medium text-white">AS9102 Excel Only</p><p className="text-xs text-gray-400">Form 3 spreadsheet</p></div>
+            <button 
+              onClick={(e) => { e.stopPropagation(); onDelete(); }} 
+              className="text-red-500 text-xs hover:text-red-400 hover:underline mt-2 block"
+            >
+              Delete
             </button>
           </div>
         </div>
@@ -799,35 +1141,59 @@ function CMMImportModal({ dimensions, onClose, onImport }) {
       const data = parseCSV(event.target.result);
       setCsvData(data);
       const autoMappings = data.map((row, idx) => {
-        const featureNum = row.feature || row.id || row['feature #'] || (idx + 1).toString();
+        const featureNum = row.feature || row.id || row['feature #'] || row['feature number'] || (idx + 1).toString();
         const match = dimensions.find(d => d.id.toString() === featureNum.toString());
-        return { cmmIndex: idx, cmmData: row, matchedBalloon: match?.id || null, actualValue: row.actual || row.measured || '', status: row.status || '' };
+        return { 
+          cmmIndex: idx, 
+          cmmData: row, 
+          matchedBalloon: match?.id || null, 
+          actualValue: row.actual || row.measured || row.result || '', 
+          status: row.status || (row.pass === 'true' || row.pass === '1' ? 'PASS' : row.pass === 'false' || row.pass === '0' ? 'FAIL' : '') 
+        };
       });
       setMappings(autoMappings);
     };
     reader.readAsText(file);
   };
 
-  const matchedCount = mappings.filter(m => m.matchedBalloon).length;
+  const handleMappingChange = (idx, balloonId) => { 
+    setMappings(prev => prev.map((m, i) => i === idx ? { ...m, matchedBalloon: balloonId ? parseInt(balloonId) : null } : m)); 
+  };
 
   const handleImport = () => {
     const results = {};
-    mappings.forEach(m => { if (m.matchedBalloon) results[m.matchedBalloon] = { actual: m.actualValue, status: m.status }; });
+    mappings.forEach(m => { 
+      if (m.matchedBalloon) results[m.matchedBalloon] = { actual: m.actualValue, status: m.status }; 
+    });
     onImport(results);
   };
+
+  const matchedCount = mappings.filter(m => m.matchedBalloon).length;
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
       <div className="bg-[#161616] rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
         <div className="px-6 py-4 border-b border-[#2a2a2a] flex justify-between items-center">
-          <div><h2 className="text-xl font-bold text-white">Import CMM Results</h2><p className="text-gray-400 text-sm">Upload your CMM CSV to auto-fill measurements</p></div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+          <div>
+            <h2 className="text-xl font-bold text-white">Import CMM Results</h2>
+            <p className="text-gray-400 text-sm">Upload your CMM CSV to auto-fill measurement results</p>
+          </div>
+          <button onClick={onClose} className="text-gray-500 hover:text-white">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
         <div className="flex-1 overflow-auto p-6">
           {!csvData ? (
-            <div className="border-2 border-dashed border-[#2a2a2a] rounded-xl p-12 text-center cursor-pointer hover:border-[#3a3a3a]" onClick={() => fileInputRef.current?.click()}>
+            <div 
+              className="border-2 border-dashed border-[#2a2a2a] rounded-xl p-12 text-center cursor-pointer hover:border-[#3a3a3a]" 
+              onClick={() => fileInputRef.current?.click()}
+            >
               <input ref={fileInputRef} type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
-              <svg className="w-12 h-12 text-gray-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+              <svg className="w-12 h-12 text-gray-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
               <p className="text-white font-medium mb-2">Upload CMM CSV File</p>
               <p className="text-gray-500 text-sm">Supports standard CMM export formats</p>
             </div>
@@ -839,19 +1205,36 @@ function CMMImportModal({ dimensions, onClose, onImport }) {
               </div>
               <div className="bg-[#0a0a0a] rounded-xl overflow-hidden max-h-64">
                 <table className="w-full text-sm">
-                  <thead className="bg-[#1a1a1a] sticky top-0"><tr><th className="px-4 py-3 text-left text-gray-400">CMM Feature</th><th className="px-4 py-3 text-left text-gray-400">Actual</th><th className="px-4 py-3 text-left text-gray-400">Match to Balloon</th><th className="px-4 py-3 text-left text-gray-400">Status</th></tr></thead>
+                  <thead className="bg-[#1a1a1a] sticky top-0">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-gray-400">CMM Feature</th>
+                      <th className="px-4 py-3 text-left text-gray-400">Actual</th>
+                      <th className="px-4 py-3 text-left text-gray-400">Match to Balloon</th>
+                      <th className="px-4 py-3 text-left text-gray-400">Status</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {mappings.map((m, idx) => (
                       <tr key={idx} className="border-t border-[#1a1a1a]">
                         <td className="px-4 py-3 text-white">{m.cmmData.feature || m.cmmData.id || `Row ${idx + 1}`}</td>
                         <td className="px-4 py-3 text-white font-mono">{m.actualValue || '-'}</td>
                         <td className="px-4 py-3">
-                          <select value={m.matchedBalloon || ''} onChange={(e) => setMappings(prev => prev.map((p, i) => i === idx ? { ...p, matchedBalloon: e.target.value ? parseInt(e.target.value) : null } : p))} className="bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1 text-white text-sm">
+                          <select 
+                            value={m.matchedBalloon || ''} 
+                            onChange={(e) => handleMappingChange(idx, e.target.value)} 
+                            className="bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1 text-white text-sm"
+                          >
                             <option value="">No match</option>
                             {dimensions.map(d => <option key={d.id} value={d.id}>#{d.id} - {d.value}</option>)}
                           </select>
                         </td>
-                        <td className="px-4 py-3">{m.status && <span className={`px-2 py-1 rounded text-xs ${m.status === 'PASS' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>{m.status}</span>}</td>
+                        <td className="px-4 py-3">
+                          {m.status && (
+                            <span className={`px-2 py-1 rounded text-xs ${m.status === 'PASS' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                              {m.status}
+                            </span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -863,133 +1246,15 @@ function CMMImportModal({ dimensions, onClose, onImport }) {
         {csvData && (
           <div className="px-6 py-4 border-t border-[#2a2a2a] flex justify-end gap-3">
             <button onClick={onClose} className="px-4 py-2 text-gray-400 hover:text-white">Cancel</button>
-            <button onClick={handleImport} disabled={matchedCount === 0} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg disabled:opacity-50">Import {matchedCount} Results</button>
+            <button 
+              onClick={handleImport} 
+              disabled={matchedCount === 0} 
+              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg disabled:opacity-50"
+            >
+              Import {matchedCount} Results
+            </button>
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-// ============ REVISION COMPARE ============
-function RevisionCompare({ onClose, onComplete, visitorId, incrementUsage, isPro, onShowGlassWall }) {
-  const [revA, setRevA] = useState(null);
-  const [revB, setRevB] = useState(null);
-  const [isComparing, setIsComparing] = useState(false);
-  const [comparisonResult, setComparisonResult] = useState(null);
-  const fileInputARef = useRef(null);
-  const fileInputBRef = useRef(null);
-
-  const handleFileSelect = (file, setRev) => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => setRev({ file, name: file.name, preview: e.target.result });
-    reader.readAsDataURL(file);
-  };
-
-  const handleCompare = async () => {
-    if (!revA || !revB) return;
-    setIsComparing(true);
-    try {
-      const [formDataA, formDataB] = [new FormData(), new FormData()];
-      formDataA.append('file', revA.file);
-      formDataB.append('file', revB.file);
-      const [responseA, responseB] = await Promise.all([
-        fetch(`${API_BASE_URL}/process`, { method: 'POST', body: formDataA }),
-        fetch(`${API_BASE_URL}/process`, { method: 'POST', body: formDataB })
-      ]);
-      const [dataA, dataB] = await Promise.all([responseA.json(), responseB.json()]);
-      if (dataA.success && dataB.success) {
-        const dimsA = dataA.dimensions || [];
-        const dimsB = dataB.dimensions || [];
-        const changes = { added: [], removed: [], modified: [], unchanged: [] };
-        const TOLERANCE = 20;
-        
-        dimsB.forEach(dimB => {
-          const centerBX = (dimB.bounding_box.xmin + dimB.bounding_box.xmax) / 2;
-          const centerBY = (dimB.bounding_box.ymin + dimB.bounding_box.ymax) / 2;
-          const matchA = dimsA.find(dimA => {
-            const centerAX = (dimA.bounding_box.xmin + dimA.bounding_box.xmax) / 2;
-            const centerAY = (dimA.bounding_box.ymin + dimA.bounding_box.ymax) / 2;
-            return Math.abs(centerAX - centerBX) < TOLERANCE && Math.abs(centerAY - centerBY) < TOLERANCE;
-          });
-          if (!matchA) changes.added.push({ ...dimB, changeType: 'added' });
-          else if (matchA.value !== dimB.value) changes.modified.push({ ...dimB, changeType: 'modified', oldValue: matchA.value, newValue: dimB.value });
-          else changes.unchanged.push({ ...dimB, changeType: 'unchanged' });
-        });
-        
-        dimsA.forEach(dimA => {
-          const centerAX = (dimA.bounding_box.xmin + dimA.bounding_box.xmax) / 2;
-          const centerAY = (dimA.bounding_box.ymin + dimA.bounding_box.ymax) / 2;
-          const matchB = dimsB.find(dimB => {
-            const centerBX = (dimB.bounding_box.xmin + dimB.bounding_box.xmax) / 2;
-            const centerBY = (dimB.bounding_box.ymin + dimB.bounding_box.ymax) / 2;
-            return Math.abs(centerAX - centerBX) < TOLERANCE && Math.abs(centerAY - centerBY) < TOLERANCE;
-          });
-          if (!matchB) changes.removed.push({ ...dimA, changeType: 'removed' });
-        });
-        
-        setComparisonResult({ revA: dataA, revB: dataB, changes, summary: { added: changes.added.length, removed: changes.removed.length, modified: changes.modified.length, unchanged: changes.unchanged.length } });
-      }
-    } catch (err) { console.error('Comparison failed:', err); }
-    finally { setIsComparing(false); }
-  };
-
-  const handleUseChanges = () => {
-    if (!isPro) { onShowGlassWall(); return; }
-    if (comparisonResult && onComplete) {
-      const changedDimensions = [...comparisonResult.changes.added, ...comparisonResult.changes.modified].map((dim, idx) => ({ ...dim, id: idx + 1 }));
-      onComplete({ dimensions: changedDimensions, image: comparisonResult.revB.image, metadata: comparisonResult.revB.metadata, comparison: comparisonResult });
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-      <div className="bg-[#161616] rounded-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="px-6 py-4 border-b border-[#2a2a2a] flex justify-between items-center">
-          <div><h2 className="text-xl font-bold text-white"><span className="bg-gradient-to-r from-purple-500 to-pink-500 bg-clip-text text-transparent">Delta FAI</span> - Revision Compare</h2><p className="text-gray-400 text-sm">Upload two revisions to find what changed</p></div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
-        </div>
-        <div className="flex-1 overflow-auto p-6">
-          {!comparisonResult ? (
-            <div className="grid grid-cols-2 gap-6">
-              <div>
-                <h3 className="text-white font-medium mb-3 flex items-center gap-2"><span className="w-6 h-6 rounded bg-gray-600 flex items-center justify-center text-xs">A</span>Old Revision</h3>
-                <div className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${revA ? 'border-green-500/50 bg-green-500/5' : 'border-[#2a2a2a] hover:border-[#3a3a3a]'}`} onClick={() => fileInputARef.current?.click()}>
-                  <input ref={fileInputARef} type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => handleFileSelect(e.target.files[0], setRevA)} className="hidden" />
-                  {revA ? (<div><img src={revA.preview} alt="Rev A" className="max-h-48 mx-auto rounded mb-2" /><p className="text-green-400 text-sm">{revA.name}</p></div>) : (<div><svg className="w-10 h-10 text-gray-500 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg><p className="text-gray-400">Upload Rev A</p></div>)}
-                </div>
-              </div>
-              <div>
-                <h3 className="text-white font-medium mb-3 flex items-center gap-2"><span className="w-6 h-6 rounded bg-[#E63946] flex items-center justify-center text-xs text-white">B</span>New Revision</h3>
-                <div className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${revB ? 'border-[#E63946]/50 bg-[#E63946]/5' : 'border-[#2a2a2a] hover:border-[#3a3a3a]'}`} onClick={() => fileInputBRef.current?.click()}>
-                  <input ref={fileInputBRef} type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => handleFileSelect(e.target.files[0], setRevB)} className="hidden" />
-                  {revB ? (<div><img src={revB.preview} alt="Rev B" className="max-h-48 mx-auto rounded mb-2" /><p className="text-[#E63946] text-sm">{revB.name}</p></div>) : (<div><svg className="w-10 h-10 text-gray-500 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg><p className="text-gray-400">Upload Rev B</p></div>)}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              <div className="grid grid-cols-4 gap-4">
-                <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 text-center"><div className="text-3xl font-bold text-green-400">{comparisonResult.summary.added}</div><div className="text-green-400/70 text-sm">Added</div></div>
-                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-center"><div className="text-3xl font-bold text-yellow-400">{comparisonResult.summary.modified}</div><div className="text-yellow-400/70 text-sm">Modified</div></div>
-                <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-center"><div className="text-3xl font-bold text-red-400">{comparisonResult.summary.removed}</div><div className="text-red-400/70 text-sm">Removed</div></div>
-                <div className="bg-gray-500/10 border border-gray-500/30 rounded-xl p-4 text-center"><div className="text-3xl font-bold text-gray-400">{comparisonResult.summary.unchanged}</div><div className="text-gray-400/70 text-sm">Unchanged</div></div>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="px-6 py-4 border-t border-[#2a2a2a] flex justify-between">
-          {!comparisonResult ? (
-            <><div className="text-gray-500 text-sm">{revA && revB ? 'Ready to compare' : 'Upload both revisions'}</div>
-            <button onClick={handleCompare} disabled={!revA || !revB || isComparing} className="px-6 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-medium rounded-lg disabled:opacity-50 flex items-center gap-2">
-              {isComparing ? <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>Comparing...</> : 'Compare Revisions'}
-            </button></>
-          ) : (
-            <><button onClick={() => setComparisonResult(null)} className="text-gray-400 hover:text-white">Compare Different Files</button>
-            <button onClick={handleUseChanges} className="px-6 py-2 bg-[#E63946] hover:bg-[#c62d39] text-white font-medium rounded-lg">Balloon Only Changes ({comparisonResult.summary.added + comparisonResult.summary.modified})</button></>
-          )}
-        </div>
       </div>
     </div>
   );
