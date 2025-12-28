@@ -1001,7 +1001,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
               type="text"
               value={newBalloonValue}
               onChange={(e) => setNewBalloonValue(e.target.value)}
-              placeholder="e.g., 0.45\", 21 Teeth 0.080in Pitch..."
+              placeholder='e.g., 0.45", 21 Teeth 0.080in Pitch...'
               className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-white text-sm mb-4"
               autoFocus
               disabled={isDetecting}
