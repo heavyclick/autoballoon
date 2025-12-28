@@ -683,12 +683,15 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
       const cropW = ((maxX - minX) / 100) * imgWidth;
       const cropH = ((maxY - minY) / 100) * imgHeight;
       
-      // Add some padding around the crop (10%) for better OCR context
+      // Add padding (10%) and ROUND TO INTEGERS to fix the 422 Error
       const padding = Math.max(cropW, cropH) * 0.1;
+      
       const finalX = Math.max(0, cropX - padding);
       const finalY = Math.max(0, cropY - padding);
-      const finalW = Math.min(imgWidth - finalX, cropW + padding * 2);
-      const finalH = Math.min(imgHeight - finalY, cropH + padding * 2);
+      
+      // FIXED: Wrap in Math.round() to ensure integers
+      const finalW = Math.round(Math.min(imgWidth - finalX, cropW + padding * 2));
+      const finalH = Math.round(Math.min(imgHeight - finalY, cropH + padding * 2));
       
       canvas.width = finalW;
       canvas.height = finalH;
@@ -711,7 +714,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000);
       
-      // Send to backend for OCR
+      // Send to backend
       try {
         const response = await fetch(`${API_BASE_URL}/detect-region`, {
           method: 'POST',
@@ -721,29 +724,27 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
           },
           body: JSON.stringify({
             image: croppedBase64,
-            width: finalW,
-            height: finalH
+            width: finalW,  // Now correctly sending an Integer
+            height: finalH  // Now correctly sending an Integer
           }),
           signal: controller.signal
         });
         
         clearTimeout(timeoutId);
-        console.log('[AddBalloon] Response status:', response.status);
         
         if (response.ok) {
           const data = await response.json();
-          console.log('[AddBalloon] Response data:', data);
-
+          
           if (data.success && data.detected_text) {
             setNewBalloonValue(data.detected_text);
           } else if (data.dimensions && data.dimensions.length > 0) {
-            // Fallback for different API response structure
             const val = data.dimensions[0].value || data.dimensions[0];
             setNewBalloonValue(val);
           } else {
             setDetectionError('No text detected. Enter value manually.');
           }
         } else {
+          // Log the actual error text for easier debugging
           const errorText = await response.text();
           console.error('[AddBalloon] Request failed:', response.status, errorText);
           setDetectionError('Auto-detect unavailable. Enter value manually.');
