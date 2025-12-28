@@ -34,26 +34,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =============================================================================
-# ROUTER IMPORTS
-# =============================================================================
+# Import and include routers
 from api.routes import router as main_router
 from api.auth_routes import router as auth_router
-# Use V2 for Multi-Product Support (Pass, Monthly, Yearly)
+# FIX: Use V2 to support 24h Pass / Monthly / Yearly
 from api.payment_routes_v2 import router as payment_router
 from api.usage_routes import router as usage_router
 from api.download_routes import router as download_router
-from api.guest_session_routes import router as guest_session_router
 from api.detect_region import detect_region, RegionDetectRequest
+# FIX: Import Guest Session Routes
+from api.guest_session_routes import router as guest_session_router
 
-# =============================================================================
-# INCLUDE ROUTERS
-# =============================================================================
 app.include_router(main_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(payment_router, prefix="/api")
 app.include_router(usage_router, prefix="/api")
-app.include_router(download_router) # download_routes usually has its own prefix or root
+app.include_router(download_router)
+# FIX: Include Guest Session Router
 app.include_router(guest_session_router, prefix="/api")
 
 
@@ -252,18 +249,40 @@ async def redeem_promo(request: Request):
 
 @app.get("/api/access/check")
 async def check_access(email: str = ""):
-    """Check if user has export access."""
+    """Check if user has export access (Promos OR Paid Subscriptions)."""
     if not email:
         return {"has_access": False}
     
+    email = email.lower().strip()
+    db = get_supabase_client()
+    
     try:
-        db = get_supabase_client()
-        email = email.lower().strip()
+        # FIX: Check Paid Subscription / 24h Pass first (Users Table)
+        try:
+            user_res = db.table("users").select(
+                "is_pro, plan_tier, pass_expires_at, subscription_status"
+            ).eq("email", email).single().execute()
+            
+            if user_res.data:
+                u = user_res.data
+                # Active Pro Subscription
+                if u.get("is_pro") and u.get("subscription_status") == "active":
+                    return {"has_access": True, "plan": u.get("plan_tier"), "type": "subscription"}
+                
+                # Active 24h Pass
+                if u.get("plan_tier") == "pass_24h" and u.get("pass_expires_at"):
+                    expires = datetime.fromisoformat(u["pass_expires_at"].replace("Z", "+00:00"))
+                    if expires > datetime.now(expires.tzinfo):
+                        return {"has_access": True, "plan": "pass_24h", "expires_at": u["pass_expires_at"], "type": "pass"}
+        except Exception:
+            # User might not exist in 'users' table if they only have a promo code
+            pass
+
+        # FIX: Check Promo Codes (Access Passes Table)
+        promo_res = db.table("access_passes").select("*").eq("email", email).eq("is_active", True).order("created_at", desc=True).limit(1).execute()
         
-        result = db.table("access_passes").select("pass_type, expires_at, granted_by").eq("email", email).eq("is_active", True).order("created_at", desc=True).limit(1).execute()
-        
-        if result.data and len(result.data) > 0:
-            row = result.data[0]
+        if promo_res.data and len(promo_res.data) > 0:
+            row = promo_res.data[0]
             if row.get("expires_at"):
                 expires = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
                 if expires < datetime.now(expires.tzinfo):
@@ -276,7 +295,8 @@ async def check_access(email: str = ""):
                 "access_type": row["pass_type"],
                 "expires_at": row["expires_at"],
                 "daily_cap": caps.get("daily"),
-                "monthly_cap": caps.get("monthly")
+                "monthly_cap": caps.get("monthly"),
+                "type": "promo"
             }
         
         return {"has_access": False}
