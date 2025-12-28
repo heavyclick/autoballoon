@@ -17,9 +17,8 @@ from models.schemas import (
     ExportMetadata,
 )
 
-# FIX: Import the export service
+# FIX: Import the export service (THIS WAS CAUSING THE 500 ERROR)
 from services.export_service import export_service
-
 
 router = APIRouter()  # NO PREFIX - endpoints registered at root, main.py handles routing
 
