@@ -262,10 +262,11 @@ class DetectionService:
             key=lambda d: (d.bounding_box["ymin"], d.bounding_box["xmin"])
         )
         
-        # Dynamic thresholds based on avg_height
-        H_THRESH = int(avg_height * 1.5)   # Max horiz gap (1.5x char height)
-        V_THRESH = int(avg_height * 0.5)   # Max vert misalignment (0.5x char height)
-        V_STACK = int(avg_height * 2.5)    # Max vert gap for stacking (2.5x char height)
+        # Dynamic thresholds with FLOORS to prevent splitting
+        # Floor of 40 ensures we don't split valid text just because font is small
+        H_THRESH = max(40, int(avg_height * 3.0))   
+        V_THRESH = int(avg_height * 0.6)   
+        V_STACK = int(avg_height * 2.5)    
         
         groups = []
         used = set()
@@ -334,12 +335,11 @@ class DetectionService:
         t2 = det2.text.strip()
         
         # Case 1: Horizontal adjacency (same line)
-        # Allow negative overlap (-5) to gap (h_thresh)
         if y_diff <= v_thresh and -5 <= x_gap <= h_thresh:
             return self._should_merge_horizontal(t1, t2, x_gap)
         
         # Case 2: Vertical stacking (text below)
-        # Use v_stack for vertical gap, and loose horizontal alignment check (e.g. h_thresh or wider)
+        # Use v_stack for vertical gap, and loose horizontal alignment check
         if x_diff <= h_thresh * 1.5 and 0 < (c2_y - c1_y) <= v_stack:
             return self._should_merge_vertical(t1, t2)
         
@@ -348,62 +348,67 @@ class DetectionService:
     def _should_merge_horizontal(self, prev: str, curr: str, gap: float) -> bool:
         """Should horizontally adjacent tokens merge?"""
         
+        # FIX #1: Clean comparison to handle chaining properly
+        # Instead of 'if prev in [...]', check the LAST WORD of prev
+        prev_last = prev.strip().split()[-1] if prev.strip() else ""
+        curr_first = curr.strip().split()[0] if curr.strip() else ""
+        
         # Modifier + dimension: "4X" + "0.2in"
-        if self._is_modifier(prev) and self._looks_like_dimension(curr):
+        if self._is_modifier(prev_last) and self._looks_like_dimension(curr):
             return True
         
         # Dimension + modifier: "0.2in" + "4X"
-        if self._looks_like_dimension(prev) and self._is_modifier(curr):
+        if self._looks_like_dimension(prev_last) and self._is_modifier(curr):
             return True
             
-        # NEW: Suffix description starting with "For" (e.g. "0.160in" + "For...")
-        if self._looks_like_dimension(prev) and curr.lower().startswith('for'):
+        # Suffix description: "0.160in" + "For..."
+        if self._looks_like_dimension(prev_last) and curr.lower().startswith('for'):
             return True
 
-        # NEW: "Teeth", "Pitch", "Places" usage (e.g., "21" + "Teeth")
-        if prev.isdigit() and re.match(r'^(?:Teeth|Tooth|Pitch|Places|Plcs|Holes|Slots)$', curr, re.IGNORECASE):
+        # "Teeth", "Pitch", "Places" usage
+        if prev_last.isdigit() and re.match(r'^(?:Teeth|Tooth|Pitch|Places|Plcs|Holes|Slots)$', curr, re.IGNORECASE):
             return True
         
-        # NEW: Pitch Diameter fix (Added Diameter, Major, Minor)
-        if re.match(r'^(?:x|X|×|Wd\.?|Lg\.?|Key|OD|ID|Pitch|Teeth|Diameter|Dia\.?|Major|Minor)$', curr, re.IGNORECASE):
+        # FIX #2: Pitch Diameter / Connector Logic
+        # Allow chaining: "Pitch" (from previous group) + "Diameter" (current)
+        connectors = ['x', '×', 'wd', 'lg', 'pitch', 'teeth', 'diameter', 'dia', 'major', 'minor']
+        if prev_last.lower() in connectors:
             return True
-        if prev.lower() in ['x', 'wd', 'lg', 'pitch', 'teeth', 'diameter', 'dia', 'major', 'minor']:
+            
+        # Or if current starts with connector
+        if re.match(r'^(?:x|X|×|Wd\.?|Lg\.?|Key|OD|ID|Pitch|Teeth|Diameter|Dia\.?|Major|Minor)$', curr, re.IGNORECASE):
             return True
         
         # Mixed fraction: "3" + "1/4"
-        if prev.isdigit() and re.match(r'^\d+/\d+["\']?$', curr):
+        if prev_last.isdigit() and re.match(r'^\d+/\d+["\']?$', curr):
             return True
         
         # Fraction + unit: "1/4" + '"'
-        if re.match(r'^\d+/\d+$', prev) and curr in ['"', "'", "in", "mm"]:
+        if re.match(r'^\d+/\d+$', prev_last) and curr in ['"', "'", "in", "mm"]:
             return True
         
-        # Tolerance: dimension + "+0.005" or "-0.003"
+        # Tolerance
         if PATTERNS.is_tolerance(curr):
             return True
         
-        # Thread parts: dimension + "UN/UNF", "NPT", "(SAE)"
+        # Thread parts
         if re.match(r'^(?:UN[CF]?|UNF|NPT|SAE|\(SAE\)|Thread|THD)$', curr, re.IGNORECASE):
             return True
         
         # Continuation chars
         if curr in ['-', '/', '(', ')', ':']:
             return True
-        if prev in ['-', '/', ':', 'For', 'for']:
+        if prev_last in ['-', '/', ':', 'For', 'for']:
             return True
         
         # Unit after number
-        if re.match(r'^[\d.]+$', prev) and curr.lower() in ['in', 'mm', '"', "'"]:
+        if re.match(r'^[\d.]+$', prev_last) and curr.lower() in ['in', 'mm', '"', "'"]:
             return True
         
-        # Small gap, neither is complete
+        # Small gap simple merge
         if gap <= 15:
             if not (self._is_complete_dim(prev) and self._is_complete_dim(curr)):
                 return True
-        
-        # Two complete dimensions - DON'T merge
-        if self._is_complete_dim(prev) and self._is_complete_dim(curr):
-            return False
         
         return gap <= 20
     
@@ -414,7 +419,7 @@ class DetectionService:
         if PATTERNS.is_tolerance(lower):
             return True
         
-        # Descriptive label below dimension - ADDED many keywords here
+        # Descriptive label below dimension
         if re.match(r'^(?:Flange|Tube|OD|ID|Pipe|Thread|For|Pitch|Teeth|Max|Min|Typ|Diameter|Dia\.?|Major|Minor)$', lower, re.IGNORECASE):
             return True
         
@@ -517,8 +522,7 @@ class DetectionService:
             target_x = gem.x_percent * 10
             target_y = gem.y_percent * 10
             
-            # Dynamic max distance: 3x - 5x the character height
-            # This creates a "search radius" proportional to the text size
+            # Dynamic max distance
             max_dist = max(150, avg_height * 5.0) 
             
             best_match = None
@@ -539,17 +543,16 @@ class DetectionService:
                 if text_score < 0.15:
                     continue
                 
-                # USE DYNAMIC max_dist
                 location_score = max(0, 1 - (distance / max_dist))
                 
-                # Combined score - require BOTH to be decent
+                # Combined score
                 if location_score > 0.3 and text_score > 0.3:
                     combined = (location_score * 0.5) + (text_score * 0.5)
                     if combined > best_score:
                         best_score = combined
                         best_match = ocr
             
-            # === STRATEGY 2: Prioritize Text Match with Location Verification ===
+            # === STRATEGY 2: Prioritize Text Match ===
             if not best_match or best_score < 0.5:
                 text_candidates = []
                 for ocr in grouped_ocr:
@@ -557,13 +560,12 @@ class DetectionService:
                         continue
                     
                     text_score = self._text_similarity(gem.value, ocr.text)
-                    if text_score >= 0.5:  # Good text match
+                    if text_score >= 0.5:
                         box = ocr.bounding_box
                         ocr_x = (box["xmin"] + box["xmax"]) / 2
                         ocr_y = (box["ymin"] + box["ymax"]) / 2
                         distance = ((ocr_x - target_x) ** 2 + (ocr_y - target_y) ** 2) ** 0.5
                         
-                        # Use dynamic max allowed distance too
                         max_allowed = max_dist * 1.5 if text_score > 0.7 else max_dist
                         if distance < max_allowed:
                             text_candidates.append((ocr, text_score, distance))
@@ -584,18 +586,27 @@ class DetectionService:
                         best_match = combined_match
                         best_score = verify_score
             
-            # === STRATEGY 4: Exact/High Text Match Anywhere ===
-            if not best_match or best_score < 0.6:
-                for ocr in grouped_ocr:
-                    if id(ocr) in used_ocr_ids:
-                        continue
-                    
-                    text_score = self._text_similarity(gem.value, ocr.text)
-                    if text_score > 0.85:
-                        if text_score > best_score:
-                            best_match = ocr
-                            best_score = text_score
-            
+            # === STRATEGY 4 (NEW): Gemini Trust Fallback ===
+            # If no OCR match found, but Gemini was confident, USE GEMINI directly
+            # This handles cases where OCR completely failed to group "0.500 Pitch Dia"
+            if not best_match and gem.confidence > 0.85:
+                # Create a "virtual" match at the location Gemini said
+                # We define a small box around the target point
+                virtual_box = {
+                    "xmin": target_x - 30, "xmax": target_x + 30,
+                    "ymin": target_y - 15, "ymax": target_y + 15
+                }
+                matched.append(Dimension(
+                    id=0,
+                    value=gem.value,
+                    zone=None,
+                    bounding_box=BoundingBox(**virtual_box),
+                    confidence=gem.confidence,
+                    page=1
+                ))
+                continue # Skip the normal append below
+
+            # Normal append if match found
             if best_match:
                 used_ocr_ids.add(id(best_match))
                 matched.append(Dimension(
