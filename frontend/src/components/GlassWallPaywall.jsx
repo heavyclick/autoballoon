@@ -1,6 +1,6 @@
 /**
  * GlassWallPaywall Component - Fixed
- * Saves email to localStorage before redirect so LandingPage detects access.
+ * Saves email and download preference to localStorage before redirect.
  */
 
 import React, { useState } from 'react';
@@ -78,9 +78,13 @@ export function GlassWallPaywall({
       const data = await response.json();
 
       if (data.checkout_url) {
-        // FIX: Save email so LandingPage knows to check for access on return
+        // FIX: Save email and download preference so LandingPage knows what to do on return
         localStorage.setItem('autoballoon_user_email', email);
         localStorage.setItem('autoballoon_pending_payment_session', sessionId);
+        
+        // Default preference: ZIP (contains everything) unless we add specific buttons later
+        localStorage.setItem('autoballoon_download_preference', 'zip'); 
+        
         window.location.href = data.checkout_url;
       } else {
         setError(data.message || 'Failed to create checkout. Please try again.');
