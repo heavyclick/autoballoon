@@ -1,7 +1,6 @@
 /**
- * GlassWallPaywall Component - UPDATED with Zero-Storage Security Messaging
- * The "trap" modal that appears when user clicks Export.
- * Now emphasizes security/privacy as a selling point.
+ * GlassWallPaywall Component - Fixed
+ * Saves email to localStorage before redirect so LandingPage detects access.
  */
 
 import React, { useState } from 'react';
@@ -79,6 +78,8 @@ export function GlassWallPaywall({
       const data = await response.json();
 
       if (data.checkout_url) {
+        // FIX: Save email so LandingPage knows to check for access on return
+        localStorage.setItem('autoballoon_user_email', email);
         localStorage.setItem('autoballoon_pending_payment_session', sessionId);
         window.location.href = data.checkout_url;
       } else {
@@ -114,7 +115,6 @@ export function GlassWallPaywall({
         <div className="grid md:grid-cols-2 gap-0">
           {/* Left side - Stats and Email */}
           <div className="p-8">
-            {/* Header */}
             <div className="mb-6">
               <div className="inline-flex items-center gap-2 bg-green-500/10 text-green-400 text-sm font-medium px-3 py-1 rounded-full mb-4">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -127,7 +127,6 @@ export function GlassWallPaywall({
               </h2>
             </div>
 
-            {/* Stats Grid */}
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div className="bg-[#0d0d0d] rounded-xl p-4 border border-[#2a2a2a]">
                 <div className="text-3xl font-bold text-white mb-1">{dims}</div>
@@ -147,7 +146,6 @@ export function GlassWallPaywall({
               </div>
             </div>
 
-            {/* Security Badge - NEW */}
             <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-4 mb-6">
               <div className="flex items-start gap-3">
                 <svg className="w-5 h-5 text-green-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -169,7 +167,6 @@ export function GlassWallPaywall({
               work, select a plan below.
             </p>
 
-            {/* Email Input */}
             <div className="mb-4">
               <label className="block text-gray-400 text-sm mb-2">
                 Enter email to proceed to checkout
@@ -183,7 +180,6 @@ export function GlassWallPaywall({
               />
             </div>
 
-            {/* Promo Code Toggle */}
             <div className="mb-4">
               {!showPromoInput ? (
                 <button
@@ -209,7 +205,6 @@ export function GlassWallPaywall({
               </div>
             )}
 
-            {/* Security Note */}
             <p className="text-gray-600 text-xs flex items-center gap-1">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
@@ -218,9 +213,7 @@ export function GlassWallPaywall({
             </p>
           </div>
 
-          {/* Right side - Pricing Cards */}
           <div className="bg-[#0d0d0d] p-8 rounded-r-2xl border-l border-[#2a2a2a]">
-            {/* Blurred Excel Preview */}
             <div className="mb-6 rounded-lg overflow-hidden border border-[#2a2a2a]">
               <img 
                 src={BLURRED_EXCEL_IMAGE}
@@ -232,7 +225,6 @@ export function GlassWallPaywall({
               />
             </div>
 
-            {/* Pricing Cards */}
             <div className="space-y-4">
               {/* 24-Hour Pass */}
               <div 
@@ -285,7 +277,7 @@ export function GlassWallPaywall({
                 </button>
               </div>
 
-              {/* Pro Monthly - Highlighted */}
+              {/* Pro Monthly */}
               <div 
                 className={`relative p-4 rounded-xl border-2 transition-all cursor-pointer ${
                   selectedPlan === 'pro_monthly' 
@@ -331,12 +323,6 @@ export function GlassWallPaywall({
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
                     Multi-page PDF support
-                  </li>
-                  <li className="flex items-center gap-2 text-gray-400">
-                    <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    Cancel anytime
                   </li>
                 </ul>
                 <button
@@ -392,12 +378,6 @@ export function GlassWallPaywall({
                     </svg>
                     2 months free ($396 savings)
                   </li>
-                  <li className="flex items-center gap-2 text-gray-400">
-                    <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    Priority email support
-                  </li>
                 </ul>
                 <button
                   onClick={(e) => {
@@ -412,7 +392,6 @@ export function GlassWallPaywall({
               </div>
             </div>
 
-            {/* Trust Badges */}
             <div className="mt-6 pt-6 border-t border-[#2a2a2a]">
               <div className="flex items-center justify-center gap-6 text-gray-500 text-xs">
                 <div className="flex items-center gap-1">
