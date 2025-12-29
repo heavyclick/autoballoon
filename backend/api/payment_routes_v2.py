@@ -118,6 +118,25 @@ async def create_checkout(request: CheckoutRequest):
     if request.session_id:
         success_url += f"?session_id={request.session_id}"
     
+    # --- FIX START: Strict String Conversion ---
+    # LemonSqueezy API requires all custom fields to be strict strings.
+    # Without str(), "None" or Pydantic types can cause 422 errors.
+    
+    safe_email = str(request.email)
+    safe_plan_type = str(request.plan_type)
+    
+    # Handle session_id safely - ensure it is an empty string if None
+    safe_session_id = ""
+    if request.session_id and str(request.session_id).strip():
+        safe_session_id = str(request.session_id).strip()
+
+    custom_data = {
+        "user_email": safe_email,
+        "session_id": safe_session_id,
+        "plan_type": safe_plan_type,
+    }
+    # --- FIX END ---
+
     try:
         async with httpx.AsyncClient() as client:
             checkout_payload = {
@@ -125,12 +144,8 @@ async def create_checkout(request: CheckoutRequest):
                     "type": "checkouts",
                     "attributes": {
                         "checkout_data": {
-                            "email": request.email,
-                            "custom": {
-                                "user_email": request.email,
-                                "session_id": request.session_id or "",
-                                "plan_type": request.plan_type,
-                            }
+                            "email": safe_email,
+                            "custom": custom_data # Use the sanitized dict
                         },
                         "checkout_options": {
                             "dark": True,
