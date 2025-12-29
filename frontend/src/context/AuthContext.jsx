@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 
 const AuthContext = createContext(null);
 
+// Ensure this matches your actual backend URL (or import from constants/config if preferred)
 const API_BASE_URL = "https://autoballoon-production.up.railway.app/api";
 const TOKEN_KEY = 'autoballoon_token';
 const USER_KEY = 'autoballoon_user';
@@ -37,11 +38,18 @@ export function AuthProvider({ children }) {
   const logout = useCallback(() => {
     setToken(null);
     setUser(null);
+    
+    // Clear Authentication Data
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    
+    // FIX: Clear the "Free/Guest Access" identity keys
+    // This prevents the Landing Page from thinking the user is still active
+    localStorage.removeItem('autoballoon_user_email'); 
+    localStorage.removeItem('autoballoon_download_preference');
   }, []);
 
-  // FIX: Implement real user refresh
+  // Implement real user refresh to keep state in sync
   const refreshUser = useCallback(async () => {
     if (!token) return null;
     
