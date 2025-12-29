@@ -6,12 +6,14 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { API_BASE_URL } from '../constants/config';
+import { PaywallModal } from '../components/PaywallModal';
 
 export function LoginPage() {
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState(null);
+  const [showPaywall, setShowPaywall] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -26,6 +28,13 @@ export function LoginPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       });
+
+      // Handle "Payment Required" (402) - User exists/is new but not Pro
+      if (response.status === 402) {
+        setShowPaywall(true);
+        setIsLoading(false);
+        return;
+      }
 
       const data = await response.json();
 
@@ -83,6 +92,14 @@ export function LoginPage() {
 
   return (
     <div className="min-h-screen bg-[#0d0d0d] flex items-center justify-center px-4">
+      {/* Paywall Modal for non-pro users attempting to login */}
+      <PaywallModal 
+        isOpen={showPaywall} 
+        initialEmail={email}
+        hideLoginLink={true}
+        onLoginClick={() => setShowPaywall(false)}
+      />
+
       <div className="max-w-md w-full">
         {/* Logo */}
         <div className="text-center mb-8">
