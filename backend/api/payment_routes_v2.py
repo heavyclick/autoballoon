@@ -60,6 +60,7 @@ class CheckoutRequest(BaseModel):
     plan_type: str  # 'pass_24h', 'pro_monthly', or 'pro_yearly'
     session_id: Optional[str] = None  # Guest session to restore after payment
     promo_code: Optional[str] = None
+    callback_url: Optional[str] = None # Added for compatibility with frontend v1 calls
 
 class CheckoutResponse(BaseModel):
     success: bool
@@ -118,23 +119,20 @@ async def create_checkout(request: CheckoutRequest):
     if request.session_id:
         success_url += f"?session_id={request.session_id}"
     
-    # --- FIX START: Strict String Conversion ---
-    # LemonSqueezy API requires all custom fields to be strict strings.
-    # Without str(), "None" or Pydantic types can cause 422 errors.
-    
+    # --- FIX START: ROBUST CUSTOM DATA HANDLING ---
     safe_email = str(request.email)
     safe_plan_type = str(request.plan_type)
     
-    # Handle session_id safely - ensure it is an empty string if None
-    safe_session_id = ""
-    if request.session_id and str(request.session_id).strip():
-        safe_session_id = str(request.session_id).strip()
-
+    # Initialize custom data with mandatory fields
     custom_data = {
         "user_email": safe_email,
-        "session_id": safe_session_id,
         "plan_type": safe_plan_type,
     }
+
+    # CRITICAL FIX: Only add session_id if it exists and is not empty.
+    # LemonSqueezy rejects empty strings ("") or nulls in custom data with a 422 error.
+    if request.session_id and str(request.session_id).strip():
+         custom_data["session_id"] = str(request.session_id).strip()
     # --- FIX END ---
 
     try:
@@ -145,7 +143,7 @@ async def create_checkout(request: CheckoutRequest):
                     "attributes": {
                         "checkout_data": {
                             "email": safe_email,
-                            "custom": custom_data # Use the sanitized dict
+                            "custom": custom_data # Use the strictly validated dict
                         },
                         "checkout_options": {
                             "dark": True,
