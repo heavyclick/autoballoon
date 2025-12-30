@@ -143,41 +143,19 @@ Multi-part dimensions describing one feature:
 - "M8x1.25" → ONE entry
 - "1/2 NPT" → ONE entry
 
-### 5. TEXT NOTES WITH MEASURABLE REQUIREMENTS
-Look at text blocks (often at bottom of drawing) for specifications:
-- "Micrometer Graduation Marks: 0.001in" → Extract as ONE entry
-- "Straight Line Travel Accuracy: 0.0005in per in" → Extract as ONE entry
-- "For Screw Size: No. 10" → Extract as ONE entry
+### 5. GD&T FEATURE CONTROL FRAMES (CRITICAL)
+If you see a GD&T box (Feature Control Frame), transcribe it using PIPES '|' to separate the compartments.
+Examples:
+- [Position][Ø.010 M][A][B] → "⌖|Ø.010(M)|A|B"
+- [Perp][.005][A] → "⟂|0.005|A"
+- [Profile][.020][A][B][C] → "⌓|0.020|A|B|C"
+
+Use these symbols if possible: ⌖ (Position), ⟂ (Perpendicularity), ∥ (Parallelism), ⏥ (Flatness), ⌓ (Profile), ◎ (Concentricity), ↗ (Runout).
+If unsure of symbol, use text: [POS], [PERP], [PAR].
 
 ### 6. DUPLICATE VALUES IN DIFFERENT LOCATIONS
-CRITICAL: If the same dimension value appears in MULTIPLE places on the drawing, each instance needs its own balloon for inspection.
-
-Example: If "1.312in" appears twice (left side and right side):
-✓ CORRECT - Return BOTH with different positions:
-  {"value": "1.312in", "x": 25, "y": 35},
-  {"value": "1.312in", "x": 75, "y": 35}
-
-✗ WRONG - Only returning one:
-  {"value": "1.312in", "x": 25, "y": 35}
-
-Count carefully! Scan the ENTIRE drawing for repeated values.
-
-### 7. SIMPLE DIMENSIONS
-- Linear: 1.75in, 32mm, 4.750in
-- Fractions: 1/4", 3/8"
-- Mixed fractions: 3 1/4", 4 7/8"
-- Diameters: Ø5, ⌀3.2
-- Radii: R2.5
-- Angles: 45°, 40deg
-
-## WHAT TO IGNORE (Not Design Characteristics)
-- Part numbers (6296K81, 5469K125)
-- Company names (McMaster-Carr)
-- Drawing titles (Hydraulic Pump, Positioning Table)
-- Copyright text
-- Zone/grid letters at borders (A, B, C, 1, 2, 3)
-- "CAD", "PART NUMBER" labels
-- URLs (http://www.mcmaster.com)
+If the same dimension value appears in MULTIPLE places on the drawing, each instance needs its own balloon for inspection.
+Example: If "1.312in" appears twice (left side and right side), return BOTH with different positions.
 
 ## RESPONSE FORMAT
 Return JSON with "dimensions" array. Each entry needs value, x, y:
@@ -186,20 +164,11 @@ Return JSON with "dimensions" array. Each entry needs value, x, y:
   "dimensions": [
     {"value": "4X 0.2in", "x": 12, "y": 22},
     {"value": "For 3.0in Flange OD", "x": 35, "y": 25},
-    {"value": "0.188\" Wd. x 7/8\" Lg. Key", "x": 45, "y": 58},
+    {"value": "⌖|Ø.010(M)|A|B|C", "x": 45, "y": 55},
     {"value": "1.312in", "x": 25, "y": 35},
-    {"value": "1.312in", "x": 75, "y": 35},
-    {"value": "Micrometer Graduation Marks: 0.001in", "x": 15, "y": 92}
+    {"value": "1.312in", "x": 75, "y": 35}
   ]
 }
-
-## CHECKLIST BEFORE RESPONDING
-☐ Did I keep modifiers WITH their dimensions? (4X, 2X, TYP)
-☐ Did I keep compound dimensions together? (Wd. x Lg., Travel Length)
-☐ Did I extract dimensions from text notes at bottom?
-☐ Did I include EVERY instance of repeated dimension values?
-☐ Did I include thread callouts with full specification?
-☐ Are x,y positions accurate for WHERE each dimension appears?
 
 Return ONLY the JSON object, no other text."""
 
