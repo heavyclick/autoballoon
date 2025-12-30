@@ -14,6 +14,7 @@ Uses pypdf for vector text extraction.
 import io
 import base64
 import logging
+import math
 from typing import Optional, List, Tuple, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
@@ -174,37 +175,77 @@ class FileService:
                 try:
                     pypdf_page = pdf_reader.pages[i]
                     
-                    # Visitor function to extract text and bounding boxes
+                    # Visitor function to extract text and bounding boxes with ROTATION support
                     def visitor_body(text, cm, tm, fontDict, fontSize):
                         if text and text.strip():
-                            # Normalize coordinates to 0-1000 scale based on page mediabox
-                            # PDF Coordinates: Origin is Bottom-Left
-                            # System Coordinates: Origin is Top-Left (0-1000)
-                            w = float(pypdf_page.mediabox.width)
-                            h = float(pypdf_page.mediabox.height)
+                            # Normalize to 0-1000 scale
+                            w_page = float(pypdf_page.mediabox.width)
+                            h_page = float(pypdf_page.mediabox.height)
                             
-                            if w > 0 and h > 0:
-                                x = tm[4]
-                                y = tm[5]
+                            if w_page > 0 and h_page > 0:
+                                # 1. Calculate Effective Font Size (Scale * Raw Size)
+                                # tm[0] is X-scale, tm[3] is Y-scale. 
+                                # Use Y-scale for height calculation.
+                                # Handle rotation (swap X/Y if rotated 90deg)
+                                scale_y = math.sqrt(tm[2]**2 + tm[3]**2) 
+                                real_height = fontSize * scale_y
                                 
-                                # Convert to normalized 0-1000 scale
-                                # ymin in image = distance from top
-                                # Note: PDF y is distance from bottom.
-                                # Top of text is roughly y + fontSize. Bottom is y.
-                                # Image y is distance from top.
-                                # Image Top = h - (y + fontSize)
-                                # Image Bottom = h - y
+                                # Fallback if scale is zero/invalid
+                                if real_height == 0: real_height = fontSize
+
+                                # 2. Matrix Components
+                                x_origin = tm[4]
+                                y_origin = tm[5]
                                 
-                                # Using len(text) * 0.6 * fontSize as approx width
-                                approx_width = fontSize * len(text) * 0.6
+                                # 3. Calculate Width approx
+                                scale_x = math.sqrt(tm[0]**2 + tm[1]**2)
+                                text_len_units = len(text) * fontSize * scale_x * 0.6
+
+                                # 4. Handle Rotation
+                                is_vertical = abs(tm[1]) > abs(tm[0])
+                                
+                                if is_vertical:
+                                    # Vertical Text (Going UP)
+                                    box_w = real_height
+                                    box_h = text_len_units
+                                    
+                                    # Adjust Origin: PDF draws from baseline. 
+                                    # For vertical, visual top-left depends on rotation direction, 
+                                    # but approximating center is usually safer.
+                                    # Let's define the box extending UP from origin.
+                                    pdf_xmin = x_origin
+                                    pdf_xmax = x_origin + box_w
+                                    pdf_ymin = y_origin
+                                    pdf_ymax = y_origin + box_h
+                                else:
+                                    # Horizontal Text
+                                    box_w = text_len_units
+                                    box_h = real_height
+                                    
+                                    pdf_xmin = x_origin
+                                    pdf_xmax = x_origin + box_w
+                                    pdf_ymin = y_origin
+                                    pdf_ymax = y_origin + box_h
+
+                                # 5. Convert to System (0-1000, Top-Left Origin)
+                                # PDF Y is Bottom-Left. System Y is Top-Left.
+                                # y_origin is the BASELINE. 
+                                # Box Top (Lower Y value) = PageHeight - (Baseline + Height)
+                                # Note: PDF ymin is visually lower, so it becomes System ymax (higher value)
+                                sys_xmin = (pdf_xmin / w_page) * 1000
+                                sys_xmax = (pdf_xmax / w_page) * 1000
+                                
+                                # Flip Y axis
+                                sys_ymin = ((h_page - pdf_ymax) / h_page) * 1000
+                                sys_ymax = ((h_page - pdf_ymin) / h_page) * 1000
                                 
                                 vector_data.append({
                                     'text': text,
                                     'bbox': {
-                                        'xmin': (x / w) * 1000,
-                                        'ymin': ((h - y - fontSize) / h) * 1000, # Approx top
-                                        'xmax': ((x + approx_width) / w) * 1000, 
-                                        'ymax': ((h - y) / h) * 1000 # Approx bottom
+                                        'xmin': sys_xmin,
+                                        'ymin': sys_ymin,
+                                        'xmax': sys_xmax,
+                                        'ymax': sys_ymax
                                     }
                                 })
                     
