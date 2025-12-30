@@ -71,6 +71,7 @@ class AlignmentService:
 
         # 3. Adaptive Thresholding - Handles uneven lighting/shadows on scans
         # This converts to binary (black/white) which ORB loves
+        # Result: Background = 255 (White), Text = 0 (Black)
         img_thresh = cv2.adaptiveThreshold(
             img_blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
             cv2.THRESH_BINARY, 11, 2
@@ -95,6 +96,156 @@ class AlignmentService:
             return False
             
         return True
+
+    def _transform_point(self, point: Tuple[float, float], matrix: np.ndarray) -> Tuple[float, float]:
+        """Helper to transform a single point (x, y) using a homography matrix."""
+        pt = np.array([[[point[0], point[1]]]], dtype=np.float32)
+        try:
+            transformed_pt = cv2.perspectiveTransform(pt, matrix)[0][0]
+            return float(transformed_pt[0]), float(transformed_pt[1])
+        except Exception:
+            # Return a far-off point to indicate failure without crashing
+            return -9999.0, -9999.0
+
+    def port_balloons(self, img_a_b64: str, img_b_b64: str, balloons_a: List) -> Tuple[List, Dict]:
+        """
+        Port balloons from Revision A (old) to Revision B (new).
+        Calculates A -> B transformation and updates coordinates.
+        Checks if ported balloons land on "ink" (features) in the new drawing.
+        """
+        stats = {"ported": 0, "dropped": 0, "method": "feature_alignment"}
+        
+        # --- Step 1: Decode ---
+        img_a_raw = self.decode_image(img_a_b64)
+        img_b_raw = self.decode_image(img_b_b64)
+        
+        if img_a_raw is None or img_b_raw is None:
+            logger.error("Porting failed: Could not decode images")
+            return [], {"error": "Image decode failure"}
+
+        # --- Step 2: Preprocess ---
+        img_a, scale_a = self.preprocess_image(img_a_raw)
+        img_b, scale_b = self.preprocess_image(img_b_raw)
+
+        # --- Step 3: Features & Matching ---
+        kp1, des1 = self.orb.detectAndCompute(img_a, None)
+        kp2, des2 = self.orb.detectAndCompute(img_b, None)
+
+        if des1 is None or des2 is None or len(kp1) < self.MIN_MATCH_COUNT or len(kp2) < self.MIN_MATCH_COUNT:
+            logger.warning("Porting failed: Insufficient features")
+            return [], {"error": "Insufficient features to align drawings"}
+
+        matches = self.matcher.match(des1, des2)
+        matches = sorted(matches, key=lambda x: x.distance)
+        good_matches = matches[:int(len(matches) * 0.25)]
+
+        if len(good_matches) < self.MIN_MATCH_COUNT:
+             return [], {"error": "Insufficient matches between revisions"}
+
+        # --- Step 4: Homography A -> B ---
+        # Query (1) = A, Train (2) = B
+        # We want Map A -> B
+        src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+
+        M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+
+        if not self.validate_homography(M):
+            return [], {"error": "Alignment failed (bad homography)"}
+
+        # --- Step 5: Scale Correction ---
+        # Map: (A_orig * s_a) -> M -> (B_orig * s_b)
+        # B_orig = (1/s_b) * M * s_a * A_orig
+        scale_mat_a = np.array([[scale_a, 0, 0], [0, scale_a, 0], [0, 0, 1]])
+        scale_mat_b_inv = np.array([[1/scale_b, 0, 0], [0, 1/scale_b, 0], [0, 0, 1]])
+        
+        M_final = np.dot(scale_mat_b_inv, np.dot(M, scale_mat_a))
+
+        # --- Step 6: Port Balloons ---
+        ported_balloons = []
+        
+        for balloon in balloons_a:
+            # Handle both Pydantic models and dicts
+            try:
+                if isinstance(balloon, dict):
+                     box = balloon.get('bounding_box')
+                     b_id = balloon.get('id')
+                     b_val = balloon.get('value', '')
+                else:
+                     box = balloon.bounding_box
+                     b_id = balloon.id
+                     b_val = getattr(balloon, 'value', '')
+                     
+                # Handle box as dict or object
+                if isinstance(box, dict):
+                    xmin, ymin, xmax, ymax = box['xmin'], box['ymin'], box['xmax'], box['ymax']
+                else:
+                    xmin, ymin, xmax, ymax = box.xmin, box.ymin, box.xmax, box.ymax
+            except (AttributeError, KeyError):
+                continue # Skip invalid items
+
+            # Calculate Center
+            cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+            w, h = xmax - xmin, ymax - ymin
+
+            # Transform Center
+            new_cx, new_cy = self._transform_point((cx, cy), M_final)
+
+            # Check if off-page (negative coords)
+            if new_cx < 0 or new_cy < 0:
+                stats["dropped"] += 1
+                continue
+
+            # --- Ink Check ---
+            # Map new center to processed image B coordinates for pixel checking
+            chk_x = int(new_cx * scale_b)
+            chk_y = int(new_cy * scale_b)
+            
+            # Check window size (approx 20px or scaled width)
+            chk_w = max(5, int(w * scale_b))
+            chk_h = max(5, int(h * scale_b))
+            
+            x1_c = max(0, chk_x - chk_w // 2)
+            y1_c = max(0, chk_y - chk_h // 2)
+            x2_c = min(img_b.shape[1], chk_x + chk_w // 2)
+            y2_c = min(img_b.shape[0], chk_y + chk_h // 2)
+            
+            # Extract ROI
+            roi = img_b[y1_c:y2_c, x1_c:x2_c]
+            
+            # Count black pixels (Ink). Adaptive thresholding makes ink 0.
+            # Assuming ink is < 128
+            if roi.size > 0:
+                ink_pixels = np.count_nonzero(roi < 128)
+                ink_ratio = ink_pixels / roi.size
+            else:
+                ink_ratio = 0
+            
+            # Heuristic: If > 1% ink, we assume it landed on something
+            has_feature = ink_ratio > 0.01 
+            
+            # Update Coordinates
+            new_box = {
+                "xmin": new_cx - w/2,
+                "xmax": new_cx + w/2,
+                "ymin": new_cy - h/2,
+                "ymax": new_cy + h/2
+            }
+            
+            # Create ported item dict
+            ported_item = {
+                "id": b_id,
+                "old_id": b_id,
+                "value": b_val,
+                "bounding_box": new_box,
+                "status": "ported" if has_feature else "detached",
+                "alignment_score": round(ink_ratio, 3)
+            }
+            
+            ported_balloons.append(ported_item)
+            stats["ported"] += 1
+
+        return ported_balloons, stats
 
     def align_and_compare(self, img_a_b64: str, img_b_b64: str, dims_a: List, dims_b: List) -> Tuple[List, List, Dict]:
         """
@@ -151,7 +302,8 @@ class AlignmentService:
         if len(good_matches) < self.MIN_MATCH_COUNT:
             return self._fallback_compare(dims_a, dims_b, error="Insufficient matches")
 
-        # --- Step 5: Homography Calculation ---
+        # --- Step 5: Homography Calculation (B -> A) ---
+        # src = B (Train), dst = A (Query)
         src_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
         dst_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
 
@@ -190,13 +342,7 @@ class AlignmentService:
             cy = (box.ymin + box.ymax) / 2
             
             # 2. Transform Point B -> A Space
-            pt = np.array([[[cx, cy]]], dtype=np.float32)
-            try:
-                transformed_pt = cv2.perspectiveTransform(pt, matrix)[0][0]
-                tx, ty = transformed_pt[0], transformed_pt[1]
-            except Exception:
-                # If math fails for a point, treat as added
-                tx, ty = -9999, -9999
+            tx, ty = self._transform_point((cx, cy), matrix)
 
             # 3. Find Match in A
             best_match = None
