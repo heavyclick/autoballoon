@@ -103,7 +103,7 @@ class ExportService:
         writer = csv.writer(output)
         
         # Header
-        header = ["Char No", "Reference Location", "Classification", "Requirement", "Results", "Min", "Max"]
+        header = ["Char No", "Reference Location", "Classification", "Requirement", "Results", "Min", "Max", "Tooling"]
         if total_pages > 1:
             header.append("Sheet")
         writer.writerow(header)
@@ -111,14 +111,22 @@ class ExportService:
         # Data
         for dim in dimensions:
             parsed = dim.get("parsed", {}) or {}
+            
+            # Format requirement with Quantity if present
+            req_text = dim.get("value", "")
+            qty = parsed.get("quantity", 1)
+            if qty > 1:
+                req_text = f"{qty}X {req_text}"
+                
             row = [
                 dim.get("id", ""),
                 dim.get("zone", "—"),
                 dim.get("classification", ""), # Critical/Major/Minor
-                dim.get("value", ""),
+                req_text,
                 dim.get("actual", ""),
                 parsed.get("min_limit", ""),
-                parsed.get("max_limit", "")
+                parsed.get("max_limit", ""),
+                parsed.get("inspection_method", "")
             ]
             if total_pages > 1:
                 row.append(dim.get("page", 1))
@@ -132,7 +140,7 @@ class ExportService:
         ws = wb.active
         ws.title = "Inspection Data"
         
-        headers = ["ID", "Zone", "Class", "Requirement", "Min", "Max", "Result"]
+        headers = ["ID", "Zone", "Class", "Requirement", "Min", "Max", "Result", "Method"]
         ws.append(headers)
         
         for dim in dimensions:
@@ -144,7 +152,8 @@ class ExportService:
                 dim.get("value"),
                 parsed.get("min_limit"),
                 parsed.get("max_limit"),
-                "" # Result placeholder
+                "", # Result placeholder
+                parsed.get("inspection_method", "")
             ])
             
         output = io.BytesIO()
@@ -351,16 +360,31 @@ class ExportService:
             classification = dim.get("classification", "")
             self._write_cell(ws, current_row, 3, classification, align=self.CENTER)
             
-            # 4. Requirement (Value + Tolerances)
-            # If we have parsed math, maybe format nicely? For now, raw value.
-            self._write_cell(ws, current_row, 4, dim.get("value", ""), align=self.LEFT)
+            # 4. Requirement (Value + Tolerances + Quantity + Fits)
+            # Pre-pend Quantity if > 1
+            raw_val = dim.get("value", "")
+            qty = parsed.get("quantity", 1)
+            display_req = raw_val
+            
+            if qty > 1:
+                # Avoid double '4X' if it's already in the raw value
+                if not f"{qty}X" in raw_val and not f"{qty}x" in raw_val:
+                    display_req = f"{qty}X {raw_val}"
+
+            # Append Fit Class if present
+            fit_class = parsed.get("fit_class")
+            if fit_class and fit_class not in display_req:
+                display_req += f" ({fit_class})"
+                
+            self._write_cell(ws, current_row, 4, display_req, align=self.LEFT)
             
             # 5. Results (User Input)
             # We add Conditional Formatting later
             self._write_cell(ws, current_row, 5, dim.get("actual", ""), align=self.CENTER)
             
             # 6. Tooling
-            self._write_cell(ws, current_row, 6, "", align=self.CENTER)
+            tooling_info = parsed.get("inspection_method", "")
+            self._write_cell(ws, current_row, 6, tooling_info, align=self.CENTER)
             
             # 7. Non-Conformance
             self._write_cell(ws, current_row, 7, "", align=self.CENTER)
