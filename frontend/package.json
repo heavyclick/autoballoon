@@ -8,10 +8,17 @@
     "build": "vite build",
     "preview": "vite preview"
   },
-  "keywords": ["manufacturing", "blueprint", "dimensions", "qc", "inspection"],
+  "keywords": [
+    "manufacturing",
+    "blueprint",
+    "dimensions",
+    "qc",
+    "inspection"
+  ],
   "author": "Heavyclick",
   "license": "MIT",
   "dependencies": {
+    "jszip": "^3.10.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^6.20.0"
