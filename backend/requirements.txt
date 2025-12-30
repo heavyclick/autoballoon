@@ -46,3 +46,7 @@ python-dotenv>=1.0.0
 
 # Security
 passlib>=1.7.4
+
+# Computer Vision (For Revision Compare)
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
