@@ -7,8 +7,9 @@ Key improvements:
 2. GD&T Decomposition: Breaks down Feature Control Frames
 3. Unit Awareness: Auto-detects Imperial vs Metric pages
 4. Location Matching: Fuses Gemini semantic locations with accurate OCR text
-   - Fixes "Fraction Splitting" (e.g., "5 1/8" vs "1")
-   - Fixes "Balloon Swapping" (e.g., 0.188 snapping to "1")
+   - FIX: "Ghost Fallback" prevents snapping to wrong text if no match found
+   - FIX: Length guards prevent short dimensions matching long notes
+   - FIX: Tightened distance thresholds to stop swapping
 5. Custom Grid: Supports dynamic grid recalibration
 """
 import re
@@ -181,16 +182,14 @@ class DetectionService:
         # 1. Get raw OCR
         raw_ocr = await self._run_ocr(image_bytes, width, height)
         debug['raw_ocr_count'] = len(raw_ocr)
-        debug['raw_ocr_sample'] = [d.text for d in raw_ocr[:30]]
         
         # === NEW: Detect Units ===
         page_units = self._detect_page_units(raw_ocr)
         debug['detected_units'] = page_units
         
-        # 2. Group OCR intelligently (FIXED: Aggressive Fraction Merging)
+        # 2. Group OCR intelligently (Aggressive Fraction Merging)
         grouped_ocr = self._group_ocr(raw_ocr)
         debug['grouped_ocr_count'] = len(grouped_ocr)
-        debug['grouped_ocr'] = [d.text for d in grouped_ocr]
         
         # 3. Get Gemini dimensions with locations
         gemini_dims = await self._run_gemini(image_bytes)
@@ -199,7 +198,7 @@ class DetectionService:
             for d in gemini_dims
         ]
         
-        # 4. Match using LOCATION-FIRST strategy (FIXED: Exclusive Consumption)
+        # 4. Match using LOCATION-FIRST strategy (Strict Logic)
         matched = self._match_by_location(grouped_ocr, raw_ocr, gemini_dims)
         debug['matched_count'] = len(matched)
         
@@ -274,7 +273,6 @@ class DetectionService:
                 return self._parse_gdt_frame(clean_val, page_units)
 
             # 2. Standard Dimension Parsing
-            # Remove modifiers for math check
             clean_val_std = clean_val.upper().replace('Ø', '').replace('R', '')
             clean_val_std = re.sub(r'\b[2468]X\b', '', clean_val_std)
             clean_val_std = clean_val_std.replace('TYP', '').replace('REF', '')
@@ -354,7 +352,6 @@ class DetectionService:
             return None
 
         except Exception:
-            # If parsing fails, allow standard dimension to pass through without parsing
             return None
 
     def _parse_gdt_frame(self, value_str: str, page_units: str) -> Optional[ParsedValues]:
@@ -422,20 +419,8 @@ class DetectionService:
     # ==========================
 
     def recalculate_zones(self, dimensions: List[Dimension], grid_config: Optional[Dict] = None) -> List[Dimension]:
-        """
-        Recalculates zones for all dimensions based on a custom grid configuration.
-        Used when user calibrates the grid in the UI.
-        
-        grid_config format: {
-            'columns': ['A', 'B', 'C'],
-            'rows': ['1', '2', '3'],
-            'box': {'xmin': 50, 'ymin': 50, 'xmax': 950, 'ymax': 950}  # Optional frame crop
-        }
-        """
         cols = grid_config.get('columns') if grid_config else self.STANDARD_GRID_COLUMNS
         rows = grid_config.get('rows') if grid_config else self.STANDARD_GRID_ROWS
-        
-        # Determine active area (frame) to calculate relative to
         box = grid_config.get('box') if grid_config else None
         
         for dim in dimensions:
@@ -460,16 +445,12 @@ class DetectionService:
         cols = cols or self.STANDARD_GRID_COLUMNS
         rows = rows or self.STANDARD_GRID_ROWS
         
-        # If a custom frame box is provided (calibration), normalize coords to that box
         if box:
             width = box['xmax'] - box['xmin']
             height = box['ymax'] - box['ymin']
             if width > 0 and height > 0:
-                # Offset and scale (0-1000) relative to the box
                 rel_x = (center_x - box['xmin']) / width * 1000
                 rel_y = (center_y - box['ymin']) / height * 1000
-                
-                # Clamp to 0-1000
                 center_x = max(0, min(1000, rel_x))
                 center_y = max(0, min(1000, rel_y))
         
@@ -557,7 +538,7 @@ class DetectionService:
         h_dist = b2["xmin"] - b1["xmax"]
         if not (-5 < h_dist < 40): return False
         
-        # Must overlap vertically
+        # Must overlap vertically (top of fraction near top of number, or bottom near bottom)
         v_overlap = min(b1["ymax"], b2["ymax"]) - max(b1["ymin"], b2["ymin"])
         if v_overlap <= 0: return False
         
@@ -565,7 +546,7 @@ class DetectionService:
         t2 = det2.text.strip()
         
         # Case: Number followed by Fraction ("5" + "1/8")
-        if t1.replace('.','',1).isdigit() and ('/' in t2 or t2 in ['1/2','1/4','3/4','1/8']):
+        if t1.replace('.','',1).isdigit() and ('/' in t2 or t2 in ['1/2','1/4','3/4','1/8', '1/16', '3/16']):
             return True
             
         # Case: Fraction followed by Unit ("1/2" + "in")
@@ -613,52 +594,34 @@ class DetectionService:
         """Should horizontally adjacent tokens merge?"""
         
         # Modifier + dimension: "4X" + "0.2in"
-        if self._is_modifier(prev) and self._looks_like_dimension(curr):
-            return True
-        
-        # Dimension + modifier: "0.2in" + "4X"
-        if self._looks_like_dimension(prev) and self._is_modifier(curr):
-            return True
+        if self._is_modifier(prev) and self._looks_like_dimension(curr): return True
+        if self._looks_like_dimension(prev) and self._is_modifier(curr): return True
         
         # Mixed fraction: "3" + "1/4"
-        if prev.isdigit() and re.match(r'^\d+/\d+["\']?$', curr):
-            return True
+        if prev.isdigit() and re.match(r'^\d+/\d+["\']?$', curr): return True
         
         # Fraction + unit: "1/4" + '"'
-        if re.match(r'^\d+/\d+$', prev) and curr in ['"', "'", "in", "mm"]:
-            return True
+        if re.match(r'^\d+/\d+$', prev) and curr in ['"', "'", "in", "mm"]: return True
         
-        # Tolerance: dimension + "+0.005" or "-0.003"
-        if PATTERNS.is_tolerance(curr):
-            return True
+        # Tolerance: dimension + "+0.005"
+        if PATTERNS.is_tolerance(curr): return True
         
-        # Compound connectors: anything + "x", "Wd.", "Lg.", "Key"
-        if re.match(r'^(?:x|X|×|Wd\.?|Lg\.?|Key|OD|ID)$', curr, re.IGNORECASE):
-            return True
+        # Compound connectors
+        if re.match(r'^(?:x|X|×|Wd\.?|Lg\.?|Key|OD|ID)$', curr, re.IGNORECASE): return True
+        if prev.lower() in ['x', '×', 'wd.', 'wd', 'lg.', 'lg']: return True
         
-        # After connector: "x" + dimension
-        if prev.lower() in ['x', '×', 'wd.', 'wd', 'lg.', 'lg']:
-            return True
-        
-        # Thread parts: dimension + "UN/UNF", "NPT", "(SAE)"
-        if re.match(r'^(?:UN[CF]?|UNF|NPT|SAE|\(SAE\)|Thread|THD)$', curr, re.IGNORECASE):
-            return True
+        # Thread parts
+        if re.match(r'^(?:UN[CF]?|UNF|NPT|SAE|\(SAE\)|Thread|THD)$', curr, re.IGNORECASE): return True
         
         # Continuation chars
-        if curr in ['-', '/', '(', ')', ':']:
-            return True
-        if prev in ['-', '/', ':', 'For', 'for']:
-            return True
-        
-        # "For" prefix: "For" + "3.0in"
-        if prev.lower() == 'for':
-            return True
+        if curr in ['-', '/', '(', ')', ':']: return True
+        if prev in ['-', '/', ':', 'For', 'for']: return True
+        if prev.lower() == 'for': return True
         
         # Unit after number
-        if re.match(r'^[\d.]+$', prev) and curr.lower() in ['in', 'mm', '"', "'"]:
-            return True
+        if re.match(r'^[\d.]+$', prev) and curr.lower() in ['in', 'mm', '"', "'"]: return True
         
-        # Small gap, neither is complete
+        # Small gap merging
         if gap <= 15:
             if not (self._is_complete_dim(prev) and self._is_complete_dim(curr)):
                 return True
@@ -671,31 +634,18 @@ class DetectionService:
     
     def _should_merge_vertical(self, upper: str, lower: str) -> bool:
         """Should vertically stacked tokens merge?"""
-        
-        # Tolerance below dimension
-        if PATTERNS.is_tolerance(lower):
-            return True
-        
-        # Descriptive label below dimension (For 3.0in / Flange OD)
-        if re.match(r'^(?:Flange|Tube|OD|ID|Pipe|Thread)$', lower, re.IGNORECASE):
-            return True
-        
-        # "OD" or "ID" labels
-        if lower.upper() in ['OD', 'ID']:
-            return True
-        
+        if PATTERNS.is_tolerance(lower): return True
+        if re.match(r'^(?:Flange|Tube|OD|ID|Pipe|Thread)$', lower, re.IGNORECASE): return True
+        if lower.upper() in ['OD', 'ID']: return True
         return False
     
     def _is_modifier(self, text: str) -> bool:
-        """Is this a quantity/type modifier?"""
         text = text.strip()
         for pat in self.MODIFIER_PATTERNS:
-            if re.match(pat, text, re.IGNORECASE):
-                return True
+            if re.match(pat, text, re.IGNORECASE): return True
         return False
     
     def _looks_like_dimension(self, text: str) -> bool:
-        """Does this look like a dimension value?"""
         text = text.strip()
         patterns = [
             r'^\d+\.?\d*["\']?$',      # 0.2, 0.2", 25
@@ -707,7 +657,6 @@ class DetectionService:
         return any(re.match(p, text, re.IGNORECASE) for p in patterns)
     
     def _is_complete_dim(self, text: str) -> bool:
-        """Is this a complete standalone dimension?"""
         text = text.strip()
         patterns = [
             r'^\d+\s+\d+/\d+["\']$',    # 3 1/4"
@@ -724,29 +673,29 @@ class DetectionService:
         if len(group) == 1:
             return group[0]
         
-        # Sort by position
         group.sort(key=lambda d: (d.bounding_box["ymin"], d.bounding_box["xmin"]))
         
-        # Build text with spacing
         parts = []
         for i, det in enumerate(group):
             if i > 0:
                 prev = group[i-1]
-                # Check if vertical vs horizontal
                 y_gap = det.bounding_box["ymin"] - prev.bounding_box["ymax"]
                 x_gap = det.bounding_box["xmin"] - prev.bounding_box["xmax"]
                 
-                if y_gap > 8:
-                    # Vertical - space
-                    parts.append(" ")
+                # Smart spacing: no space for fractions or slashes
+                if det.text.startswith('/') or prev.text.endswith('/'):
+                    space = ""
+                elif y_gap > 8:
+                    space = " " # Vertical gap
                 elif x_gap > 10:
-                    # Horizontal with gap
-                    parts.append(" ")
-                # else: no space
-            
+                    space = " " # Horizontal gap
+                else:
+                    space = ""
+                
+                parts.append(space)
             parts.append(det.text)
         
-        merged_text = "".join(parts)
+        merged_text = "".join(parts).strip()
         
         merged_box = {
             "xmin": min(d.bounding_box["xmin"] for d in group),
@@ -770,15 +719,17 @@ class DetectionService:
         """
         Match Gemini dimensions to OCR using LOCATION and EXCLUSIVE CONSUMPTION.
         
-        Fixes "Balloon Swapping":
-        - Sorts Gemini dimensions by length (Longest first) -> "5 1/8" matches before "1"
-        - Tracks 'used_ocr_ids' so "1" cannot steal the OCR box for "5 1/8"
+        Logic Fixes:
+        1. Sort by Length: Match "5 1/8" before "1" to prevent stealing.
+        2. Strict Distance: Reduce search radius to 80 (8%) to stop jumping.
+        3. Length Guard: Prevent short values matching long notes.
+        4. Ghost Fallback: If no good text found, float at Gemini coords.
         """
         matched = []
-        used_ocr_ids = set() # Critical: Once an OCR box is used, it is GONE.
+        used_ocr_ids = set()
         
-        # Pass 1: High Confidence Exact Matches (Text + Location)
-        # Sort Gemini dims by length (descending) to match complex strings like "5 1/8" first
+        # Pass 1: High Confidence Exact Matches
+        # Sort Gemini dims by length (descending) so "5 1/8" matches before "1"
         gemini_dims_sorted = sorted(gemini_dims, key=lambda x: len(x.value), reverse=True)
         
         for gem in gemini_dims_sorted:
@@ -795,7 +746,7 @@ class DetectionService:
                 
                 # Text Score
                 text_score = self._text_similarity(gem.value, ocr.text)
-                if text_score < 0.8: continue # Must be strong match for Pass 1
+                if text_score < 0.85: continue # Very Strict
                 
                 # Location Score
                 box = ocr.bounding_box
@@ -803,22 +754,20 @@ class DetectionService:
                 cy = (box["ymin"] + box["ymax"]) / 2
                 dist = ((cx - target_x)**2 + (cy - target_y)**2)**0.5
                 
-                if dist > 200: continue # Must be reasonably close
+                if dist > 80: continue # Tight radius (8%)
                 
                 # Combined Score
-                score = text_score * 2 - (dist / 1000) # Weight text heavily
-                
+                score = text_score * 2 - (dist / 1000)
                 if score > best_score:
                     best_score = score
                     best_match = ocr
             
             if best_match:
                 used_ocr_ids.add(id(best_match))
-                gem.matched = True # Mark gemini dim as handled
+                gem.matched = True
                 matched.append(self._create_dimension(gem, best_match))
 
-        # Pass 2: Loose Match (Location Priority) - With Guards!
-        # For items like "0.188" that might have bad OCR
+        # Pass 2: Loose Match (with GUARDS)
         for gem in gemini_dims_sorted:
             if hasattr(gem, 'matched') and gem.matched: continue
             
@@ -831,17 +780,23 @@ class DetectionService:
             for ocr in grouped_ocr:
                 if id(ocr) in used_ocr_ids: continue
                 
-                # GUARD RAIL: Must have SOME text similarity
-                # Prevents "0.188" snapping to "1" just because it's close
+                # GUARD 1: Must have reasonable text similarity
                 text_score = self._text_similarity(gem.value, ocr.text)
-                if text_score < 0.3: continue 
+                if text_score < 0.4: continue 
+                
+                # GUARD 2: Length Ratio (Prevent "3/4" matching "1/2 NPT...")
+                len_gem = len(gem.value)
+                len_ocr = len(ocr.text)
+                if len_gem > 0 and len_ocr > 0:
+                    ratio = len_ocr / len_gem
+                    if ratio > 3.0 or ratio < 0.33: continue # Must be roughly same length
                 
                 box = ocr.bounding_box
                 cx = (box["xmin"] + box["xmax"]) / 2
                 cy = (box["ymin"] + box["ymax"]) / 2
                 dist = ((cx - target_x)**2 + (cy - target_y)**2)**0.5
                 
-                if dist < 250 and dist < best_dist:
+                if dist < 120 and dist < best_dist: # Moderate radius (12%)
                     best_dist = dist
                     best_match = ocr
             
@@ -849,8 +804,9 @@ class DetectionService:
                 used_ocr_ids.add(id(best_match))
                 matched.append(self._create_dimension(gem, best_match))
             else:
-                # Fallback: If no OCR match found, create a "floating" balloon at Gemini's location
-                # This is better than placing it on wrong text
+                # GHOST FALLBACK:
+                # If no suitable OCR match found, float at Gemini's coordinates.
+                # DO NOT SNAP to unrelated text.
                 matched.append(Dimension(
                     id=0,
                     value=gem.value,
@@ -860,7 +816,7 @@ class DetectionService:
                         ymin=target_y-10, ymax=target_y+10,
                         center_x=target_x, center_y=target_y
                     ),
-                    confidence=0.5,
+                    confidence=0.5, # Low confidence visual indicator
                     page=1
                 ))
 
@@ -881,21 +837,14 @@ class DetectionService:
         """Calculate text similarity."""
         n1 = self._normalize(s1)
         n2 = self._normalize(s2)
-        
-        if n1 == n2:
-            return 1.0
-        if n1 in n2 or n2 in n1:
-            return 0.8
-        
+        if n1 == n2: return 1.0
+        if n1 in n2 or n2 in n1: return 0.8
         return SequenceMatcher(None, n1, n2).ratio()
     
     def _normalize(self, text: str) -> str:
         """Normalize for comparison."""
-        if not text:
-            return ""
-        n = text.lower()
-        # Keep only alphanumeric and dots for comparison
-        return re.sub(r'[^\w.]', '', n)
+        if not text: return ""
+        return re.sub(r'[^\w.]', '', text.lower())
     
     def _try_combine_nearby(
         self,
@@ -906,33 +855,21 @@ class DetectionService:
         used: set
     ) -> Optional[OCRDetection]:
         """Try to combine raw OCR tokens near the target location."""
-        
-        # Find tokens near target location
         nearby = []
         for ocr in raw_ocr:
-            if id(ocr) in used:
-                continue
-            
+            if id(ocr) in used: continue
             box = ocr.bounding_box
             cx = (box["xmin"] + box["xmax"]) / 2
             cy = (box["ymin"] + box["ymax"]) / 2
-            
             dist = ((cx - target_x) ** 2 + (cy - target_y) ** 2) ** 0.5
-            if dist < 150:  # Within range
-                nearby.append((ocr, dist))
+            if dist < 150: nearby.append((ocr, dist))
         
-        if not nearby:
-            return None
+        if not nearby: return None
         
-        # Sort by distance
         nearby.sort(key=lambda x: x[1])
-        
-        # Take closest few and check if they form the target
         candidates = [n[0] for n in nearby[:6]]
         
-        # Try to match
         target_norm = self._normalize(gem.value)
-        
         for size in range(len(candidates), 0, -1):
             for combo in self._combinations(candidates, size):
                 combo_sorted = sorted(combo, key=lambda d: (d.bounding_box["ymin"], d.bounding_box["xmin"]))
@@ -952,13 +889,11 @@ class DetectionService:
                         },
                         confidence=0.7
                     )
-        
         return None
     
     def _combinations(self, items: list, size: int):
         """Generate combinations."""
-        if size == 0:
-            yield []
+        if size == 0: yield []
         elif items:
             for i, item in enumerate(items):
                 for combo in self._combinations(items[i+1:], size-1):
@@ -966,9 +901,7 @@ class DetectionService:
     
     def _sort_reading_order(self, dims: List[Dimension]) -> List[Dimension]:
         """Sort in reading order."""
-        if not dims:
-            return []
-        
+        if not dims: return []
         band = 100
         return sorted(
             dims,
