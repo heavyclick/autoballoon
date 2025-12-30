@@ -19,6 +19,8 @@ from models.schemas import (
 
 # FIX: Import the export service (THIS WAS CAUSING THE 500 ERROR)
 from services.export_service import export_service
+# FIX: Import the alignment service for robust revision comparison
+from services.alignment_service import alignment_service
 
 router = APIRouter()  # NO PREFIX - endpoints registered at root, main.py handles routing
 
@@ -160,6 +162,90 @@ async def process_drawing(file: UploadFile = File(...)):
             }
     
     return response_data
+
+
+@router.post("/compare")
+async def compare_revisions(
+    file_a: UploadFile = File(...),
+    file_b: UploadFile = File(...)
+):
+    """
+    Compare two revisions using Computer Vision Alignment (Homography).
+    Matches dimensions despite rotation, shifting, or scanning artifacts.
+    Returns Revision B with IDs anchored to Revision A.
+    """
+    detection_service = get_detection_service()
+
+    # 1. Process Rev A (Reference)
+    bytes_a = await file_a.read()
+    result_a = await detection_service.detect_dimensions_multipage(bytes_a, file_a.filename)
+    
+    # 2. Process Rev B (Target)
+    bytes_b = await file_b.read()
+    result_b = await detection_service.detect_dimensions_multipage(bytes_b, file_b.filename)
+
+    if not result_a.success or not result_b.success:
+        raise HTTPException(status_code=422, detail="Failed to process one or both files for comparison")
+
+    # NOTE: Currently supports single-page comparison for reliability.
+    # Future: Loop through pages if multi-page.
+    page_a = result_a.pages[0] if result_a.pages else None
+    page_b = result_b.pages[0] if result_b.pages else None
+
+    if not page_a or not page_b:
+        raise HTTPException(status_code=422, detail="One of the files contains no readable pages")
+
+    # 3. Perform Alignment & Comparison via OpenCV
+    processed_dims_b, removed_dims, stats = alignment_service.align_and_compare(
+        img_a_b64=page_a.image_base64,
+        img_b_b64=page_b.image_base64,
+        dims_a=page_a.dimensions,
+        dims_b=page_b.dimensions
+    )
+
+    # 4. Construct Response
+    return {
+        "success": True,
+        "summary": stats,
+        "image": page_b.image_base64, # Return Rev B image (users want to see the new drawing)
+        "dimensions": [
+            {
+                "id": dim.id,
+                "value": dim.value,
+                "status": getattr(dim, "status", "unknown"),
+                "old_value": getattr(dim, "old_value", None),
+                "bounding_box": {
+                    "xmin": dim.bounding_box.xmin,
+                    "ymin": dim.bounding_box.ymin,
+                    "xmax": dim.bounding_box.xmax,
+                    "ymax": dim.bounding_box.ymax,
+                },
+                "zone": dim.zone,
+                "confidence": getattr(dim, "confidence", 0.0)
+            }
+            for dim in processed_dims_b
+        ],
+        "removed_dimensions": [
+            {
+                "id": dim.id,
+                "value": dim.value,
+                "status": "removed",
+                "bounding_box": { # Return A coords for removed items (ghosts)
+                    "xmin": dim.bounding_box.xmin,
+                    "ymin": dim.bounding_box.ymin,
+                    "xmax": dim.bounding_box.xmax,
+                    "ymax": dim.bounding_box.ymax,
+                },
+                "zone": dim.zone
+            }
+            for dim in removed_dims
+        ],
+        "metadata": {
+            "filename": file_b.filename,
+            "width": page_b.width,
+            "height": page_b.height
+        }
+    }
 
 
 @router.post("/export")
