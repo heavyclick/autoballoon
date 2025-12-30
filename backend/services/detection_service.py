@@ -1,17 +1,5 @@
-"""
-Detection Service - AS9102 Compliant Dimension Detection
-Orchestrates OCR + Gemini Vision fusion for accurate dimension detection.
-
-Key improvements:
-1. Smart Parsing: Converts text strings to Engineering Math (Nominal, Tolerances)
-2. GD&T Decomposition: Breaks down Feature Control Frames
-3. Unit Awareness: Auto-detects Imperial vs Metric pages
-4. Location Matching: Fuses Gemini semantic locations with accurate OCR text
-   - Fixes "Fraction Splitting" (e.g., "5 1/8" vs "1")
-   - Fixes "Balloon Swapping" (e.g., 0.188 snapping to "1")
-5. Custom Grid: Supports dynamic grid recalibration
-"""
 import re
+import logging
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -23,6 +11,8 @@ from services.file_service import FileService, PageImage, FileProcessingResult
 from services.pattern_library import PATTERNS
 from models.schemas import Dimension, BoundingBox, ErrorCode, ParsedValues
 
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Debug storage
 DEBUG_LOG = []
@@ -219,7 +209,7 @@ class DetectionService:
         try:
             return await self.ocr_service.detect_text(image_bytes, w, h)
         except Exception as e:
-            print(f"OCR error: {e}")
+            logger.error(f"OCR error: {e}")
             return []
     
     async def _run_gemini(self, image_bytes: bytes) -> List[GeminiDimension]:
@@ -239,7 +229,7 @@ class DetectionService:
                 for d in results
             ]
         except Exception as e:
-            print(f"Gemini error: {e}")
+            logger.error(f"Gemini error: {e}")
             return []
 
     # ==========================
@@ -698,7 +688,7 @@ class DetectionService:
         """Does this look like a dimension value?"""
         text = text.strip()
         patterns = [
-            r'^\d+\.?\d*["\']?$',      # 0.2, 0.2", 25
+            r'^\d+\.?\d*["\']?$',       # 0.2, 0.2", 25
             r'^\d+/\d+["\']?$',         # 1/4"
             r'^\d+\s+\d+/\d+["\']?$',   # 3 1/4"
             r'^\d+\.?\d*(?:in|mm)$',    # 0.2in, 25mm
@@ -711,11 +701,11 @@ class DetectionService:
         text = text.strip()
         patterns = [
             r'^\d+\s+\d+/\d+["\']$',    # 3 1/4"
-            r'^\d+/\d+["\']$',           # 1/4"
-            r'^\d+\.?\d*["\']$',         # 0.45"
-            r'^\d+\.\d{2,}(?:in|mm)?$',  # 0.2500in
-            r'^[ØøR]\d+\.?\d*["\']?$',   # Ø5
-            r'^\d+(?:\.\d+)?\s*mm$',     # 32mm
+            r'^\d+/\d+["\']$',            # 1/4"
+            r'^\d+\.?\d*["\']$',          # 0.45"
+            r'^\d+\.\d{2,}(?:in|mm)?$',   # 0.2500in
+            r'^[ØøR]\d+\.?\d*["\']?$',    # Ø5
+            r'^\d+(?:\.\d+)?\s*mm$',      # 32mm
         ]
         return any(re.match(p, text, re.IGNORECASE) for p in patterns)
     
