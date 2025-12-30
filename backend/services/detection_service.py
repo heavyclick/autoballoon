@@ -7,6 +7,7 @@ Key improvements:
 2. GD&T Decomposition: Breaks down Feature Control Frames
 3. Unit Awareness: Auto-detects Imperial vs Metric pages
 4. Location Matching: Fuses Gemini semantic locations with accurate OCR text
+5. Custom Grid: Supports dynamic grid recalibration
 """
 import re
 from typing import Optional, List, Dict, Any, Tuple
@@ -69,6 +70,7 @@ class MultiPageDetectionResult:
 class DetectionService:
     """AS9102-compliant dimension detection."""
     
+    # Defaults
     STANDARD_GRID_COLUMNS = ['H', 'G', 'F', 'E', 'D', 'C', 'B', 'A']
     STANDARD_GRID_ROWS = ['4', '3', '2', '1']
     
@@ -126,6 +128,7 @@ class DetectionService:
             page_debug.update(debug_info)
             
             for dim in dimensions:
+                # Calculate zone using standard grid default
                 dim.zone = self._calculate_zone(
                     dim.bounding_box.center_x,
                     dim.bounding_box.center_y
@@ -411,6 +414,67 @@ class DetectionService:
             )
     
     # ==========================
+    # CUSTOM GRID SUPPORT
+    # ==========================
+
+    def recalculate_zones(self, dimensions: List[Dimension], grid_config: Optional[Dict] = None) -> List[Dimension]:
+        """
+        Recalculates zones for all dimensions based on a custom grid configuration.
+        Used when user calibrates the grid in the UI.
+        
+        grid_config format: {
+            'columns': ['A', 'B', 'C'],
+            'rows': ['1', '2', '3'],
+            'box': {'xmin': 50, 'ymin': 50, 'xmax': 950, 'ymax': 950}  # Optional frame crop
+        }
+        """
+        cols = grid_config.get('columns') if grid_config else self.STANDARD_GRID_COLUMNS
+        rows = grid_config.get('rows') if grid_config else self.STANDARD_GRID_ROWS
+        
+        # Determine active area (frame) to calculate relative to
+        box = grid_config.get('box') if grid_config else None
+        
+        for dim in dimensions:
+            dim.zone = self._calculate_zone(
+                dim.bounding_box.center_x,
+                dim.bounding_box.center_y,
+                cols,
+                rows,
+                box
+            )
+        return dimensions
+
+    def _calculate_zone(
+        self, 
+        center_x: float, 
+        center_y: float, 
+        cols: List[str] = None, 
+        rows: List[str] = None,
+        box: Optional[Dict[str, float]] = None
+    ) -> str:
+        """Calculate grid zone with support for custom grids and frames."""
+        cols = cols or self.STANDARD_GRID_COLUMNS
+        rows = rows or self.STANDARD_GRID_ROWS
+        
+        # If a custom frame box is provided (calibration), normalize coords to that box
+        if box:
+            width = box['xmax'] - box['xmin']
+            height = box['ymax'] - box['ymin']
+            if width > 0 and height > 0:
+                # Offset and scale (0-1000) relative to the box
+                rel_x = (center_x - box['xmin']) / width * 1000
+                rel_y = (center_y - box['ymin']) / height * 1000
+                
+                # Clamp to 0-1000
+                center_x = max(0, min(1000, rel_x))
+                center_y = max(0, min(1000, rel_y))
+        
+        col_idx = min(int(center_x / (1000 / len(cols))), len(cols) - 1)
+        row_idx = min(int(center_y / (1000 / len(rows))), len(rows) - 1)
+        
+        return f"{cols[col_idx]}{rows[row_idx]}"
+
+    # ==========================
     # CORE GROUPING & MATCHING
     # ==========================
 
@@ -597,7 +661,7 @@ class DetectionService:
         """Does this look like a dimension value?"""
         text = text.strip()
         patterns = [
-            r'^\d+\.?\d*["\']?$',      # 0.2, 0.2", 25
+            r'^\d+\.?\d*["\']?$',       # 0.2, 0.2", 25
             r'^\d+/\d+["\']?$',         # 1/4"
             r'^\d+\s+\d+/\d+["\']?$',   # 3 1/4"
             r'^\d+\.?\d*(?:in|mm)$',    # 0.2in, 25mm
@@ -864,16 +928,6 @@ class DetectionService:
             for i, item in enumerate(items):
                 for combo in self._combinations(items[i+1:], size-1):
                     yield [item] + combo
-    
-    def _calculate_zone(self, center_x: float, center_y: float) -> str:
-        """Calculate grid zone."""
-        cols = self.STANDARD_GRID_COLUMNS
-        rows = self.STANDARD_GRID_ROWS
-        
-        col_idx = min(int(center_x / (1000 / len(cols))), len(cols) - 1)
-        row_idx = min(int(center_y / (1000 / len(rows))), len(rows) - 1)
-        
-        return f"{cols[col_idx]}{rows[row_idx]}"
     
     def _sort_reading_order(self, dims: List[Dimension]) -> List[Dimension]:
         """Sort in reading order."""
