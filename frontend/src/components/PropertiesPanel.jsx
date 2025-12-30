@@ -1,10 +1,16 @@
+import React from 'react';
+
 /**
  * PropertiesPanel.jsx
  * Left sidebar for editing detailed properties of the selected dimension.
  * Matches InspectionXpert's "General Settings" / "Characteristic" panel.
+ * * Updates:
+ * - Added Chart ID, Sheet, View inputs (Dimension Model)
+ * - Added Full Specification text area (Parsed Model)
+ * - Updated Tolerance UI for Fits (Hole/Shaft) and Bilateral (+/-)
+ * - Added Sampling Calculator inputs (ANSI Z1.4)
+ * - Expanded Subtypes to include Weld, Surface Finish, GD&T
  */
-import React from 'react';
-
 export function PropertiesPanel({ selectedDimension, onUpdate }) {
   if (!selectedDimension) {
     return (
@@ -20,9 +26,14 @@ export function PropertiesPanel({ selectedDimension, onUpdate }) {
     );
   }
 
-  // Helper to safely get/set nested parsed values
+  // Helper to safely get nested parsed values
   const getVal = (field, fallback = '') => {
     return selectedDimension.parsed?.[field] ?? fallback;
+  };
+
+  // Helper to safely get root values (fallback to empty string for inputs)
+  const getRoot = (field, fallback = '') => {
+    return selectedDimension[field] ?? fallback;
   };
 
   const updateParsed = (field, value) => {
@@ -39,53 +50,97 @@ export function PropertiesPanel({ selectedDimension, onUpdate }) {
   };
 
   return (
-    <div className="w-72 bg-[#161616] border-r border-[#2a2a2a] flex flex-col h-full overflow-y-auto">
+    <div className="w-80 bg-[#161616] border-r border-[#2a2a2a] flex flex-col h-full overflow-y-auto text-gray-300 font-sans">
       {/* Header */}
       <div className="p-4 border-b border-[#2a2a2a] bg-[#1a1a1a]">
         <h2 className="text-sm font-bold text-white flex items-center gap-2">
-          <span className="w-6 h-6 rounded-full bg-blue-600 flex items-center justify-center text-xs">
+          <span className="w-6 h-6 rounded-full bg-blue-600 flex items-center justify-center text-xs text-white">
             {selectedDimension.id}
           </span>
-          Characteristic Properties
+          Properties
         </h2>
       </div>
 
       <div className="p-4 space-y-6">
         
-        {/* Section: General */}
+        {/* Section: Identification */}
         <div className="space-y-3">
-          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">General</h3>
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Identification</h3>
+          
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">Chart ID</label>
+              <input 
+                type="text" 
+                className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-xs text-white outline-none focus:border-blue-500 transition-colors"
+                value={getRoot('chart_char_id')}
+                onChange={(e) => updateRoot('chart_char_id', e.target.value)}
+                placeholder="e.g. 1.1"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">Operation</label>
+              <input 
+                type="text" 
+                className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-xs text-white outline-none focus:border-blue-500 transition-colors"
+                value={getVal('operation')}
+                onChange={(e) => updateParsed('operation', e.target.value)}
+                placeholder="Op 10"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">Sheet</label>
+              <input 
+                type="text" 
+                className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-xs text-white outline-none focus:border-blue-500 transition-colors"
+                value={getRoot('sheet')}
+                onChange={(e) => updateRoot('sheet', e.target.value)}
+                placeholder="1"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">View</label>
+              <input 
+                type="text" 
+                className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-xs text-white outline-none focus:border-blue-500 transition-colors"
+                value={getRoot('view_name')}
+                onChange={(e) => updateRoot('view_name', e.target.value)}
+                placeholder="Front"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Section: Definition */}
+        <div className="space-y-3 pt-4 border-t border-[#2a2a2a]">
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Definition</h3>
           
           <div className="space-y-1">
-            <label className="text-xs text-gray-400">Value (Requirement)</label>
-            <input 
-              type="text" 
-              className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-sm text-white focus:border-blue-500 outline-none"
-              value={selectedDimension.value}
-              onChange={(e) => updateRoot('value', e.target.value)}
+            <label className="text-xs text-gray-400">Full Specification</label>
+            <textarea 
+              className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-sm text-white focus:border-blue-500 outline-none resize-none h-16 font-mono"
+              value={getVal('full_specification', selectedDimension.value || '')}
+              onChange={(e) => updateParsed('full_specification', e.target.value)}
             />
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
-              <label className="text-xs text-gray-400">Type</label>
-              <select 
-                className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-sm text-gray-300 outline-none"
-                value={getVal('subtype', 'Linear')}
-                onChange={(e) => updateParsed('subtype', e.target.value)}
-              >
-                <option value="Linear">Linear</option>
-                <option value="Diameter">Diameter</option>
-                <option value="Radius">Radius</option>
-                <option value="Angle">Angle</option>
-                <option value="Chamfer">Chamfer</option>
-                <option value="Note">Note</option>
-              </select>
+              <label className="text-xs text-gray-400">Nominal Value</label>
+              <input 
+                type="text" 
+                className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-sm text-white focus:border-blue-500 outline-none"
+                value={getRoot('value')}
+                onChange={(e) => updateRoot('value', e.target.value)}
+              />
             </div>
             <div className="space-y-1">
               <label className="text-xs text-gray-400">Units</label>
               <select 
-                className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-sm text-gray-300 outline-none"
+                className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-xs text-gray-300 outline-none"
                 value={getVal('units', 'in')}
                 onChange={(e) => updateParsed('units', e.target.value)}
               >
@@ -95,6 +150,25 @@ export function PropertiesPanel({ selectedDimension, onUpdate }) {
               </select>
             </div>
           </div>
+
+          <div className="space-y-1">
+            <label className="text-xs text-gray-400">Feature Type</label>
+            <select 
+              className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-xs text-gray-300 outline-none"
+              value={getVal('subtype', 'Linear')}
+              onChange={(e) => updateParsed('subtype', e.target.value)}
+            >
+              <option value="Linear">Linear</option>
+              <option value="Diameter">Diameter</option>
+              <option value="Radius">Radius</option>
+              <option value="Angle">Angle</option>
+              <option value="Chamfer">Chamfer</option>
+              <option value="Note">Note</option>
+              <option value="Weld">Weld</option>
+              <option value="Surface Finish">Surface Finish</option>
+              <option value="GD&T">GD&T</option>
+            </select>
+          </div>
         </div>
 
         {/* Section: Tolerancing */}
@@ -102,64 +176,76 @@ export function PropertiesPanel({ selectedDimension, onUpdate }) {
           <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Tolerancing</h3>
           
           <div className="space-y-1">
-             <label className="text-xs text-gray-400">Tolerance Type</label>
-             <select 
-                className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-sm text-gray-300 outline-none"
-                value={getVal('tolerance_type', 'bilateral')}
-                onChange={(e) => updateParsed('tolerance_type', e.target.value)}
-              >
-                <option value="bilateral">Bilateral (±)</option>
-                <option value="limit">Limit (+/-)</option>
-                <option value="fit">Fit Class (ISO 286)</option>
-                <option value="max">Max</option>
-                <option value="min">Min</option>
-                <option value="basic">Basic</option>
-              </select>
+            <label className="text-xs text-gray-400">Tolerance Type</label>
+            <select 
+              className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-xs text-gray-300 outline-none"
+              value={getVal('tolerance_type', 'bilateral')}
+              onChange={(e) => updateParsed('tolerance_type', e.target.value)}
+            >
+              <option value="bilateral">Bilateral (±)</option>
+              <option value="limit">Limit (High/Low)</option>
+              <option value="fit">ISO 286 Fit</option>
+              <option value="max">Max</option>
+              <option value="min">Min</option>
+              <option value="basic">Basic</option>
+            </select>
           </div>
 
           {/* Conditional Inputs based on Tolerance Type */}
           {getVal('tolerance_type') === 'fit' ? (
-             <div className="space-y-1">
-                <label className="text-xs text-purple-400 font-bold">Fit Class (e.g., H7)</label>
-                <input 
-                  type="text" 
-                  className="w-full bg-[#0a0a0a] border border-purple-900/50 rounded px-2 py-1.5 text-sm text-purple-400 focus:border-purple-500 outline-none font-mono"
-                  value={getVal('fit_class')}
-                  placeholder="H7"
-                  onChange={(e) => updateParsed('fit_class', e.target.value)}
-                />
-             </div>
-          ) : (
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <label className="text-xs text-gray-400">Plus / Upper</label>
+                <label className="text-xs text-purple-400 font-bold">Hole Fit</label>
                 <input 
-                  type="number" step="0.001"
-                  className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-sm text-white outline-none font-mono"
-                  value={getVal('upper_tol')}
-                  onChange={(e) => updateParsed('upper_tol', parseFloat(e.target.value))}
+                  type="text" 
+                  className="w-full bg-[#0a0a0a] border border-purple-900/50 rounded px-2 py-1.5 text-sm text-purple-400 focus:border-purple-500 outline-none font-mono uppercase"
+                  value={getVal('hole_fit_class')}
+                  placeholder="H7"
+                  onChange={(e) => updateParsed('hole_fit_class', e.target.value)}
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs text-gray-400">Minus / Lower</label>
+                <label className="text-xs text-purple-400 font-bold">Shaft Fit</label>
+                <input 
+                  type="text" 
+                  className="w-full bg-[#0a0a0a] border border-purple-900/50 rounded px-2 py-1.5 text-sm text-purple-400 focus:border-purple-500 outline-none font-mono uppercase"
+                  value={getVal('shaft_fit_class')}
+                  placeholder="g6"
+                  onChange={(e) => updateParsed('shaft_fit_class', e.target.value)}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-xs text-gray-400">Plus (+)</label>
                 <input 
                   type="number" step="0.001"
                   className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-sm text-white outline-none font-mono"
-                  value={getVal('lower_tol')}
-                  onChange={(e) => updateParsed('lower_tol', parseFloat(e.target.value))}
+                  value={getVal('plus_tolerance')}
+                  onChange={(e) => updateParsed('plus_tolerance', e.target.value === '' ? '' : parseFloat(e.target.value))}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-gray-400">Minus (-)</label>
+                <input 
+                  type="number" step="0.001"
+                  className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-sm text-white outline-none font-mono"
+                  value={getVal('minus_tolerance')}
+                  onChange={(e) => updateParsed('minus_tolerance', e.target.value === '' ? '' : parseFloat(e.target.value))}
                 />
               </div>
             </div>
           )}
 
-          <div className="bg-[#222] rounded p-2 mt-2">
+          <div className="bg-[#222] rounded p-2 mt-2 border border-[#333]">
             <div className="flex justify-between text-xs mb-1">
-              <span className="text-gray-500">Calculated Max:</span>
-              <span className="text-green-400 font-mono">{getVal('max_limit', 0).toFixed(4)}</span>
+              <span className="text-gray-500">Upper Limit:</span>
+              <span className="text-green-400 font-mono">{getVal('upper_limit', 0).toFixed(4)}</span>
             </div>
             <div className="flex justify-between text-xs">
-              <span className="text-gray-500">Calculated Min:</span>
-              <span className="text-green-400 font-mono">{getVal('min_limit', 0).toFixed(4)}</span>
+              <span className="text-gray-500">Lower Limit:</span>
+              <span className="text-green-400 font-mono">{getVal('lower_limit', 0).toFixed(4)}</span>
             </div>
           </div>
         </div>
@@ -171,7 +257,7 @@ export function PropertiesPanel({ selectedDimension, onUpdate }) {
           <div className="space-y-1">
             <label className="text-xs text-gray-400">Method</label>
             <select 
-              className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-sm text-blue-400 font-medium outline-none"
+              className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-xs text-blue-400 font-medium outline-none"
               value={getVal('inspection_method', '')}
               onChange={(e) => updateParsed('inspection_method', e.target.value)}
             >
@@ -182,19 +268,61 @@ export function PropertiesPanel({ selectedDimension, onUpdate }) {
               <option value="Micrometer">Micrometer</option>
               <option value="Gage Block">Gage Block</option>
               <option value="Pin Gage">Pin Gage</option>
+              <option value="Height Gage">Height Gage</option>
             </select>
           </div>
+        </div>
 
+         {/* Section: Sampling (ANSI Z1.4) */}
+         <div className="space-y-3 pt-4 border-t border-[#2a2a2a]">
+          <h3 className="text-xs font-bold text-yellow-600 uppercase tracking-wider">Sampling (ANSI Z1.4)</h3>
+          
           <div className="space-y-1">
-            <label className="text-xs text-gray-400">Operation</label>
+            <label className="text-xs text-gray-400">Lot Size</label>
             <input 
-              type="text" 
+              type="number" 
               className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-sm text-white outline-none"
-              placeholder="e.g. Op 10"
-              value={getVal('operation', '')}
-              onChange={(e) => updateParsed('operation', e.target.value)}
+              value={getVal('lot_size', 0)}
+              onChange={(e) => updateParsed('lot_size', parseInt(e.target.value) || 0)}
+              placeholder="Total Lot Qty"
             />
           </div>
+
+          <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-xs text-gray-400">AQL</label>
+                <select 
+                    className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-xs text-gray-300 outline-none"
+                    value={getVal('aql', '2.5')}
+                    onChange={(e) => updateParsed('aql', e.target.value)}
+                >
+                    <option value="0.65">0.65</option>
+                    <option value="1.0">1.0</option>
+                    <option value="1.5">1.5</option>
+                    <option value="2.5">2.5</option>
+                    <option value="4.0">4.0</option>
+                    <option value="6.5">6.5</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-gray-400">Level</label>
+                <select 
+                    className="w-full bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-xs text-gray-300 outline-none"
+                    value={getVal('inspection_level', 'II')}
+                    onChange={(e) => updateParsed('inspection_level', e.target.value)}
+                >
+                    <option value="I">I (Reduced)</option>
+                    <option value="II">II (Normal)</option>
+                    <option value="III">III (Tight)</option>
+                </select>
+              </div>
+          </div>
+
+          <div className="bg-yellow-900/20 border border-yellow-900/50 rounded p-2 mt-2 flex justify-between items-center">
+             <span className="text-xs text-yellow-500">Required Sample Size:</span>
+             <span className="text-lg font-bold text-white">{getVal('sample_size', 'N/A')}</span>
+          </div>
+
         </div>
 
       </div>
