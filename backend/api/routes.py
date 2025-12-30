@@ -23,11 +23,22 @@ from models.schemas import (
 from services.export_service import export_service
 from services.alignment_service import alignment_service
 from services.detection_service import create_detection_service
+from services.cmm_parser_service import cmm_parser_service
+from services.sampling_service import sampling_service
 
 # We DO NOT import region_routes here anymore to avoid the ImportError.
 # The logic is now integrated directly below.
 
 router = APIRouter()
+
+# ==================
+# Data Models
+# ==================
+
+class SamplingRequest(BaseModel):
+    lot_size: int
+    aql: float
+    level: str
 
 # ==================
 # Helper function to create detection service
@@ -376,6 +387,28 @@ async def export_inspection_data(request: ExportRequest):
             "Content-Disposition": f'attachment; filename="{filename}"'
         }
     )
+
+@router.post("/cmm/parse")
+async def parse_cmm_file(file: UploadFile = File(...)):
+    """
+    Parse raw CMM reports (PC-DMIS, Calypso, CSV) into standardized JSON.
+    Used by the CMMImport frontend component.
+    """
+    try:
+        content = await file.read()
+        # The service handles decoding and format detection automatically
+        results = cmm_parser_service.parse_file(content, file.filename)
+        return {"success": True, "results": results}
+    except Exception as e:
+        return {"success": False, "message": f"Parsing failed: {str(e)}"}
+
+
+@router.post("/sampling/calculate")
+async def calculate_sampling(req: SamplingRequest):
+    """
+    Calculate sampling plan based on ANSI/ASQ Z1.4.
+    """
+    return sampling_service.get_sampling_plan(req.lot_size, req.level, req.aql)
 
 
 @router.get("/health")
