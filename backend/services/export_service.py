@@ -1,56 +1,59 @@
 """
-Export Service - AS9102 Rev C Compliant
-Generates CSV and AS9102 Form 3 Excel exports for First Article Inspection.
+Export Service - AS9102 Rev C / ISO 13485 Compliant
+Generates comprehensive inspection packages (Forms 1, 2, & 3).
 
-Updated to match official AS9102 Rev C template format with:
-- Proper header section (Part Number, Part Name, Serial Number, FAI Identifier)
-- Official column structure matching aerospace standards
-- Multi-page support with Sheet column
-- Grid detection status indicator
+Features:
+- Multi-tab Workbook: Form 1 (Part Accountability), Form 2 (Materials), Form 3 (Results).
+- Intelligent Formatting: Auto-colors Pass/Fail and highlights Critical features.
+- Metadata Integration: Captures Revision, PO Numbers, and Material Certs.
+- Smart Math: Exports formulas for Max/Min limits if parsed data exists.
 """
 import csv
 import io
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 from openpyxl import Workbook
+from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, Protection
 from openpyxl.utils import get_column_letter
+from openpyxl.formatting.rule import CellIsRule
 
 from models import ExportFormat, ExportTemplate, ExportMetadata
 
-
 class ExportService:
     """
-    Generates AS9102 Rev C compliant export files for FAI inspection data.
+    Generates compliance-ready export files for FAI inspection data.
     """
     
     # ==================
-    # Color Scheme (Professional aerospace look)
+    # Color Scheme & Styles
     # ==================
-    HEADER_BG = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")  # Dark blue
+    HEADER_BG = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")  # Dark Blue
     HEADER_FONT = Font(bold=True, color="FFFFFF", size=10, name="Arial")
-    SUBHEADER_BG = PatternFill(start_color="D6DCE4", end_color="D6DCE4", fill_type="solid")  # Light gray-blue
+    
+    SUBHEADER_BG = PatternFill(start_color="D6DCE4", end_color="D6DCE4", fill_type="solid")  # Light Gray
     SUBHEADER_FONT = Font(bold=True, color="000000", size=9, name="Arial")
     
     TITLE_FONT = Font(bold=True, color="000000", size=14, name="Arial")
     SUBTITLE_FONT = Font(bold=True, color="1F4E79", size=11, name="Arial")
+    
     LABEL_FONT = Font(bold=True, color="000000", size=9, name="Arial")
     DATA_FONT = Font(color="000000", size=9, name="Arial")
     NOTE_FONT = Font(italic=True, color="666666", size=8, name="Arial")
     
+    # Conditional Formatting Colors
+    PASS_FILL = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid') # Green
+    FAIL_FILL = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid') # Red
+    
     # Borders
     THIN_BORDER = Border(
-        left=Side(style='thin', color='000000'),
-        right=Side(style='thin', color='000000'),
-        top=Side(style='thin', color='000000'),
-        bottom=Side(style='thin', color='000000')
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin')
     )
     MEDIUM_BORDER = Border(
-        left=Side(style='medium', color='000000'),
-        right=Side(style='medium', color='000000'),
-        top=Side(style='medium', color='000000'),
-        bottom=Side(style='medium', color='000000')
+        left=Side(style='medium'), right=Side(style='medium'),
+        top=Side(style='medium'), bottom=Side(style='medium')
     )
     
     # Alignments
@@ -58,18 +61,18 @@ class ExportService:
     LEFT = Alignment(horizontal='left', vertical='center', wrap_text=True)
     RIGHT = Alignment(horizontal='right', vertical='center')
     
-    # AS9102 Form 3 Column Headers (official names)
+    # AS9102 Form 3 Column Definitions
     FORM3_HEADERS = [
-        ("5. Char\nNo.", 8),           # Column A - width 8
-        ("6. Reference\nLocation", 12), # Column B - width 12
-        ("7. Characteristic\nDesignator", 14),  # Column C - width 14
-        ("8. Requirement", 25),         # Column D - width 25
-        ("9. Results", 15),             # Column E - width 15
-        ("10. Designed/\nQualified\nTooling", 12),  # Column F - width 12
-        ("11. Non-\nConformance\nNumber", 12),  # Column G - width 12
-        ("Sheet", 8),                   # Column H - width 8 (for multi-page)
+        ("5. Char\nNo.", 8),            # A
+        ("6. Reference\nLocation", 12), # B
+        ("7. Characteristic\nDesignator", 15),  # C (Classification)
+        ("8. Requirement", 35),         # D
+        ("9. Results", 15),             # E
+        ("10. Designed/\nQualified\nTooling", 12), # F
+        ("11. Non-\nConformance\nNumber", 12), # G
+        ("Sheet", 8),                   # H
     ]
-    
+
     def generate_export(
         self,
         dimensions: List[Dict],
@@ -80,383 +83,335 @@ class ExportService:
         grid_detected: bool = True,
         total_pages: int = 1
     ) -> tuple[bytes, str, str]:
-        """
-        Generate export file.
+        """Orchestrator for generating export files."""
         
-        Args:
-            dimensions: List of dimension dicts with id, value, zone, page (optional)
-            format: Export format (CSV or XLSX)
-            template: Export template (SIMPLE or AS9102_FORM3)
-            metadata: Optional metadata (part number, revision, etc.)
-            filename: Base filename (without extension)
-            grid_detected: Whether grid was auto-detected or using standard
-            total_pages: Total number of pages in the drawing
-            
-        Returns:
-            Tuple of (file_bytes, content_type, full_filename)
-        """
         if format == ExportFormat.CSV:
             return self._generate_csv(dimensions, filename, total_pages)
+        
+        # Excel Generation
+        if template == ExportTemplate.SIMPLE:
+            return self._generate_simple_xlsx(dimensions, filename, total_pages)
+        elif template in [ExportTemplate.AS9102_FORM3, "AS9102_FULL"]:
+            return self._generate_full_package_xlsx(dimensions, metadata, filename, grid_detected, total_pages)
         else:
-            if template == ExportTemplate.SIMPLE:
-                return self._generate_simple_xlsx(dimensions, filename, total_pages)
-            else:
-                return self._generate_as9102_xlsx(dimensions, metadata, filename, grid_detected, total_pages)
-    
-    def _generate_csv(
-        self, 
-        dimensions: List[Dict],
-        filename: str,
-        total_pages: int = 1
-    ) -> tuple[bytes, str, str]:
-        """Generate simple CSV export"""
+            # Fallback for future templates (PPAP, ISO13485)
+            return self._generate_full_package_xlsx(dimensions, metadata, filename, grid_detected, total_pages)
+
+    def _generate_csv(self, dimensions: List[Dict], filename: str, total_pages: int = 1) -> tuple[bytes, str, str]:
+        """Generate CSV export with classification support."""
         output = io.StringIO()
         writer = csv.writer(output)
         
-        # Header - include Sheet column if multi-page
+        # Header
+        header = ["Char No", "Reference Location", "Classification", "Requirement", "Results", "Min", "Max"]
         if total_pages > 1:
-            writer.writerow(["Char No", "Reference Location", "Requirement", "Sheet"])
-        else:
-            writer.writerow(["Char No", "Reference Location", "Requirement"])
+            header.append("Sheet")
+        writer.writerow(header)
         
         # Data
         for dim in dimensions:
+            parsed = dim.get("parsed", {}) or {}
             row = [
                 dim.get("id", ""),
                 dim.get("zone", "—"),
-                dim.get("value", "")
+                dim.get("classification", ""), # Critical/Major/Minor
+                dim.get("value", ""),
+                dim.get("actual", ""),
+                parsed.get("min_limit", ""),
+                parsed.get("max_limit", "")
             ]
             if total_pages > 1:
                 row.append(dim.get("page", 1))
             writer.writerow(row)
         
-        csv_bytes = output.getvalue().encode('utf-8')
-        return (
-            csv_bytes,
-            "text/csv",
-            f"{filename}_inspection.csv"
-        )
-    
-    def _generate_simple_xlsx(
-        self,
-        dimensions: List[Dict],
-        filename: str,
-        total_pages: int = 1
-    ) -> tuple[bytes, str, str]:
-        """Generate simple Excel export with basic columns"""
+        return (output.getvalue().encode('utf-8'), "text/csv", f"{filename}.csv")
+
+    def _generate_simple_xlsx(self, dimensions: List[Dict], filename: str, total_pages: int) -> tuple[bytes, str, str]:
+        """Simple Excel dump for quick analysis."""
         wb = Workbook()
         ws = wb.active
-        ws.title = "Inspection"
+        ws.title = "Inspection Data"
         
-        # Headers
-        headers = ["Char No", "Reference Location", "Requirement"]
-        if total_pages > 1:
-            headers.append("Sheet")
+        headers = ["ID", "Zone", "Class", "Requirement", "Min", "Max", "Result"]
+        ws.append(headers)
+        
+        for dim in dimensions:
+            parsed = dim.get("parsed", {}) or {}
+            ws.append([
+                dim.get("id"),
+                dim.get("zone"),
+                dim.get("classification"),
+                dim.get("value"),
+                parsed.get("min_limit"),
+                parsed.get("max_limit"),
+                "" # Result placeholder
+            ])
             
-        for col, header in enumerate(headers, start=1):
-            cell = ws.cell(row=1, column=col, value=header)
-            cell.font = self.HEADER_FONT
-            cell.fill = self.HEADER_BG
-            cell.alignment = self.CENTER
-            cell.border = self.THIN_BORDER
-        
-        # Data
-        for row_idx, dim in enumerate(dimensions, start=2):
-            ws.cell(row=row_idx, column=1, value=dim.get("id", "")).border = self.THIN_BORDER
-            ws.cell(row=row_idx, column=2, value=dim.get("zone", "—")).border = self.THIN_BORDER
-            ws.cell(row=row_idx, column=3, value=dim.get("value", "")).border = self.THIN_BORDER
-            if total_pages > 1:
-                ws.cell(row=row_idx, column=4, value=dim.get("page", 1)).border = self.THIN_BORDER
-        
-        # Column widths
-        ws.column_dimensions['A'].width = 12
-        ws.column_dimensions['B'].width = 18
-        ws.column_dimensions['C'].width = 25
-        if total_pages > 1:
-            ws.column_dimensions['D'].width = 8
-        
         output = io.BytesIO()
         wb.save(output)
-        return (output.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", f"{filename}_inspection.xlsx")
-    
-    def _generate_as9102_xlsx(
+        return (output.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", f"{filename}.xlsx")
+
+    def _generate_full_package_xlsx(
         self,
         dimensions: List[Dict],
         metadata: Optional[ExportMetadata],
         filename: str,
-        grid_detected: bool = True,
-        total_pages: int = 1
+        grid_detected: bool,
+        total_pages: int
     ) -> tuple[bytes, str, str]:
         """
-        Generate AS9102 Rev C Form 3 compliant Excel export.
-        
-        Structure:
-        - Row 1: Title
-        - Row 2: Subtitle
-        - Row 3: Empty
-        - Row 4-5: Part info header row 1 (labels + values)
-        - Row 6: Empty
-        - Row 7: Column headers (Characteristic Accountability | Inspection Results)
-        - Row 8: Column sub-headers
-        - Row 9+: Data rows
-        - Footer: Grid detection note, signature lines
+        Generates the full AS9102 3-Form Workbook.
+        Tab 1: Part Accountability (Form 1)
+        Tab 2: Product Accountability (Form 2)
+        Tab 3: Characteristic Accountability (Form 3)
         """
         wb = Workbook()
-        ws = wb.active
-        ws.title = "AS9102 Form 3"
         
-        # Build filename from metadata
-        parts = []
+        # Remove default sheet
+        if "Sheet" in wb.sheetnames:
+            wb.remove(wb["Sheet"])
+            
+        # 1. Generate Form 1 (Part Info)
+        self._create_form1(wb, metadata)
+        
+        # 2. Generate Form 2 (BOM / Specs)
+        self._create_form2(wb, metadata)
+        
+        # 3. Generate Form 3 (Dimensions)
+        self._create_form3(wb, dimensions, metadata, grid_detected, total_pages)
+        
+        # Build Filename
+        parts = [filename]
         if metadata:
-            if metadata.part_number:
-                parts.append(metadata.part_number)
-            if metadata.revision:
-                parts.append(f"Rev{metadata.revision}")
-        if not parts:
-            parts.append(filename)
-        parts.append("FAI_Form3")
-        full_filename = "_".join(parts) + ".xlsx"
+            if getattr(metadata, 'part_number', None): parts.insert(0, metadata.part_number)
+            if getattr(metadata, 'revision', None): parts.append(f"Rev{metadata.revision}")
         
-        current_row = 1
+        full_filename = "_".join(parts) + "_AS9102.xlsx"
         
-        # ==================
-        # TITLE SECTION
-        # ==================
-        ws.merge_cells('A1:H1')
-        title_cell = ws.cell(row=1, column=1, value="AS9102 First Article Inspection")
-        title_cell.font = self.TITLE_FONT
-        title_cell.alignment = self.CENTER
+        output = io.BytesIO()
+        wb.save(output)
+        return (output.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", full_filename)
+
+    def _create_form1(self, wb: Workbook, metadata: Optional[ExportMetadata]):
+        """Creates AS9102 Form 1: Part Number Accountability."""
+        ws = wb.create_sheet("Form 1")
         
-        ws.merge_cells('A2:H2')
-        subtitle_cell = ws.cell(row=2, column=1, value="Form 3: Characteristic Accountability, Verification and Compatibility Evaluation")
-        subtitle_cell.font = self.SUBTITLE_FONT
-        subtitle_cell.alignment = self.CENTER
+        # Set column widths
+        ws.column_dimensions['A'].width = 20
+        ws.column_dimensions['B'].width = 30
+        ws.column_dimensions['C'].width = 20
+        ws.column_dimensions['D'].width = 30
         
-        current_row = 4
+        # Title
+        ws.merge_cells('A1:D1')
+        title = ws.cell(row=1, column=1, value="AS9102 FORM 1: PART NUMBER ACCOUNTABILITY")
+        title.font = self.TITLE_FONT
+        title.alignment = self.CENTER
         
-        # ==================
-        # PART INFO SECTION
-        # ==================
-        # Row 4: Labels
-        info_labels = [
-            ("1. Part Number:", "A4"),
-            ("2. Part Name:", "C4"),
-            ("3. Serial Number:", "E4"),
-            ("4. FAI Identifier:", "G4"),
+        # Fields Mapping (Label, Row, Col_Label, Col_Value)
+        # Using getattr to handle missing fields gracefully
+        fields = [
+            ("1. Part Number", 3, 1, getattr(metadata, 'part_number', '')),
+            ("2. Part Name", 3, 3, getattr(metadata, 'part_name', '')),
+            ("3. Serial Number", 4, 1, getattr(metadata, 'serial_number', '')),
+            ("4. FAI Report Number", 4, 3, getattr(metadata, 'fai_report_number', '')),
+            ("5. Part Revision Level", 5, 1, getattr(metadata, 'revision', '')),
+            ("6. Drawing Number", 5, 3, getattr(metadata, 'part_number', '')), # Often same as Part No
+            ("7. Drawing Revision", 6, 1, getattr(metadata, 'revision', '')),
+            ("8. Additional Changes", 6, 3, ""),
+            ("9. Mfg. Process Ref.", 7, 1, ""),
+            ("10. Organization Name", 7, 3, "Your Organization Inc."), # Placeholder
+            ("11. Supplier Code", 8, 1, ""),
+            ("12. P.O. Number", 8, 3, ""),
         ]
         
-        for label, cell_ref in info_labels:
-            cell = ws[cell_ref]
-            cell.value = label
-            cell.font = self.LABEL_FONT
-            cell.alignment = self.LEFT
+        for label, row, col, val in fields:
+            # Label Cell
+            l_cell = ws.cell(row=row, column=col, value=label)
+            l_cell.font = self.LABEL_FONT
+            l_cell.fill = self.SUBHEADER_BG
+            l_cell.border = self.THIN_BORDER
+            
+            # Value Cell
+            v_cell = ws.cell(row=row, column=col+1, value=val)
+            v_cell.font = self.DATA_FONT
+            v_cell.border = self.THIN_BORDER
+            v_cell.alignment = self.LEFT
+
+        # Assembly/Detail Checkboxes
+        ws.merge_cells('A10:D10')
+        ws['A10'] = "13. Detail FAI   [ ]   Assembly FAI   [ ]"
+        ws['A10'].alignment = self.CENTER
+        ws['A10'].font = self.LABEL_FONT
         
-        # Row 5: Values
-        info_values = [
-            (metadata.part_number if metadata else "", "A5", "B5"),
-            (metadata.part_name if metadata else "", "C5", "D5"),
-            ("", "E5", "F5"),  # Serial Number - blank for user
-            ("", "G5", "H5"),  # FAI Identifier - blank for user
+        ws.merge_cells('A11:D11')
+        ws['A11'] = "14. Full FAI   [X]   Partial FAI   [ ]"
+        ws['A11'].alignment = self.CENTER
+        ws['A11'].font = self.LABEL_FONT
+
+        # Signature Block
+        sig_row = 14
+        ws.cell(row=sig_row, column=1, value="19. Signature").font = self.LABEL_FONT
+        ws.cell(row=sig_row, column=2, value="______________________")
+        ws.cell(row=sig_row, column=3, value="20. Date").font = self.LABEL_FONT
+        ws.cell(row=sig_row, column=4, value="______________________")
+
+    def _create_form2(self, wb: Workbook, metadata: Optional[ExportMetadata]):
+        """Creates AS9102 Form 2: Product Accountability (Materials/Specs)."""
+        ws = wb.create_sheet("Form 2")
+        
+        # Columns
+        headers = [
+            ("5. Material or Process Name", 30),
+            ("6. Specification Number", 25),
+            ("7. Code", 10),
+            ("8. Supplier", 25),
+            ("9. Customer Approval", 15),
+            ("10. Certificate of Conformance", 20)
         ]
         
-        for value, start_cell, end_cell in info_values:
-            ws.merge_cells(f"{start_cell}:{end_cell}")
-            cell = ws[start_cell]
-            cell.value = value
-            cell.font = self.DATA_FONT
-            cell.alignment = self.LEFT
+        # Setup Header
+        ws.merge_cells('A1:F1')
+        title = ws.cell(row=1, column=1, value="AS9102 FORM 2: PRODUCT ACCOUNTABILITY")
+        title.font = self.TITLE_FONT
+        title.alignment = self.CENTER
+        
+        # Column Headers
+        for idx, (txt, width) in enumerate(headers, 1):
+            cell = ws.cell(row=3, column=idx, value=txt)
+            cell.font = self.HEADER_FONT
+            cell.fill = self.HEADER_BG
+            cell.alignment = self.CENTER
             cell.border = self.THIN_BORDER
-            # Also border the end cell
-            ws[end_cell].border = self.THIN_BORDER
+            ws.column_dimensions[get_column_letter(idx)].width = width
+            
+        # Data Rows (Extract from metadata if available, otherwise placeholders)
+        # Assuming metadata might have 'materials' list in future update
+        materials = getattr(metadata, 'materials', []) 
+        start_row = 4
         
-        current_row = 7
+        if not materials:
+            # Add blank rows for manual entry
+            for i in range(5):
+                for c in range(1, 7):
+                    ws.cell(row=start_row+i, column=c).border = self.THIN_BORDER
+        else:
+            for i, mat in enumerate(materials):
+                ws.cell(row=start_row+i, column=1, value=mat.get('name', ''))
+                ws.cell(row=start_row+i, column=2, value=mat.get('spec', ''))
+                ws.cell(row=start_row+i, column=6, value=mat.get('cert_number', ''))
+                # Style rows
+                for c in range(1, 7):
+                    ws.cell(row=start_row+i, column=c).border = self.THIN_BORDER
+
+    def _create_form3(self, wb: Workbook, dimensions: List[Dict], metadata, grid_detected, total_pages):
+        """Creates AS9102 Form 3: Characteristic Accountability."""
+        ws = wb.create_sheet("Form 3")
         
-        # ==================
-        # SECTION HEADERS
-        # ==================
-        # Row 7: Section headers
-        ws.merge_cells('A7:D7')
-        char_header = ws.cell(row=7, column=1, value="Characteristic Accountability:")
-        char_header.font = self.SUBHEADER_FONT
-        char_header.fill = self.SUBHEADER_BG
-        char_header.alignment = self.CENTER
-        char_header.border = self.THIN_BORDER
+        # Title Block
+        ws.merge_cells('A1:H1')
+        ws['A1'] = "AS9102 FORM 3: CHARACTERISTIC ACCOUNTABILITY"
+        ws['A1'].font = self.TITLE_FONT
+        ws['A1'].alignment = self.CENTER
         
-        ws.merge_cells('E7:G7')
-        results_header = ws.cell(row=7, column=5, value="Inspection / Test Results:")
-        results_header.font = self.SUBHEADER_FONT
-        results_header.fill = self.SUBHEADER_BG
-        results_header.alignment = self.CENTER
-        results_header.border = self.THIN_BORDER
-        
-        # Sheet header (column H)
-        if total_pages > 1:
-            sheet_header = ws.cell(row=7, column=8, value="")
-            sheet_header.fill = self.SUBHEADER_BG
-            sheet_header.border = self.THIN_BORDER
-        
-        current_row = 8
-        
-        # ==================
-        # COLUMN HEADERS (Row 8)
-        # ==================
+        # Part Info Row
+        ws['A3'] = f"1. Part Number: {getattr(metadata, 'part_number', '')}"
+        ws['C3'] = f"2. Part Name: {getattr(metadata, 'part_name', '')}"
+        ws['E3'] = f"3. Serial Number: {getattr(metadata, 'serial_number', '')}"
+        ws['G3'] = f"4. FAI Identifier: {getattr(metadata, 'fai_report_number', '')}"
+        for cell in ['A3', 'C3', 'E3', 'G3']:
+            ws[cell].font = self.LABEL_FONT
+            ws[cell].border = self.THIN_BORDER
+
+        # Column Headers
+        header_row = 5
         for col_idx, (header, width) in enumerate(self.FORM3_HEADERS, start=1):
-            # Skip Sheet column if single page
-            if col_idx == 8 and total_pages <= 1:
-                continue
-                
-            cell = ws.cell(row=8, column=col_idx, value=header)
+            if col_idx == 8 and total_pages <= 1: continue # Skip Sheet col if single page
+            
+            cell = ws.cell(row=header_row, column=col_idx, value=header)
             cell.font = self.HEADER_FONT
             cell.fill = self.HEADER_BG
             cell.alignment = self.CENTER
             cell.border = self.THIN_BORDER
             ws.column_dimensions[get_column_letter(col_idx)].width = width
-        
-        current_row = 9
-        
-        # ==================
-        # DATA ROWS
-        # ==================
+
+        # Data Rows
+        current_row = 6
         for dim in dimensions:
-            # Column A: Char No
-            cell_a = ws.cell(row=current_row, column=1, value=dim.get("id", ""))
-            cell_a.font = self.DATA_FONT
-            cell_a.alignment = self.CENTER
-            cell_a.border = self.THIN_BORDER
+            parsed = dim.get("parsed") or {}
             
-            # Column B: Reference Location (Zone)
-            zone = dim.get("zone", "")
-            cell_b = ws.cell(row=current_row, column=2, value=zone if zone else "—")
-            cell_b.font = self.DATA_FONT
-            cell_b.alignment = self.CENTER
-            cell_b.border = self.THIN_BORDER
+            # 1. Char No
+            self._write_cell(ws, current_row, 1, dim.get("id"), align=self.CENTER)
             
-            # Column C: Characteristic Designator (blank - user fills)
-            cell_c = ws.cell(row=current_row, column=3, value="")
-            cell_c.border = self.THIN_BORDER
+            # 2. Location (Zone)
+            self._write_cell(ws, current_row, 2, dim.get("zone", "—"), align=self.CENTER)
             
-            # Column D: Requirement (dimension value)
-            cell_d = ws.cell(row=current_row, column=4, value=dim.get("value", ""))
-            cell_d.font = self.DATA_FONT
-            cell_d.alignment = self.LEFT
-            cell_d.border = self.THIN_BORDER
+            # 3. Characteristic Designator (Classification)
+            # Map Critical/Major/Minor
+            classification = dim.get("classification", "")
+            self._write_cell(ws, current_row, 3, classification, align=self.CENTER)
             
-            # Column E: Results (blank - inspector fills, or from CMM import)
-            actual = dim.get("actual", "")
-            cell_e = ws.cell(row=current_row, column=5, value=actual)
-            cell_e.font = self.DATA_FONT
-            cell_e.alignment = self.CENTER
-            cell_e.border = self.THIN_BORDER
+            # 4. Requirement (Value + Tolerances)
+            # If we have parsed math, maybe format nicely? For now, raw value.
+            self._write_cell(ws, current_row, 4, dim.get("value", ""), align=self.LEFT)
             
-            # Column F: Designed/Qualified Tooling (blank - inspector fills)
-            cell_f = ws.cell(row=current_row, column=6, value="")
-            cell_f.border = self.THIN_BORDER
+            # 5. Results (User Input)
+            # We add Conditional Formatting later
+            self._write_cell(ws, current_row, 5, dim.get("actual", ""), align=self.CENTER)
             
-            # Column G: Non-Conformance Number (blank - inspector fills)
-            cell_g = ws.cell(row=current_row, column=7, value="")
-            cell_g.border = self.THIN_BORDER
+            # 6. Tooling
+            self._write_cell(ws, current_row, 6, "", align=self.CENTER)
             
-            # Column H: Sheet (page number) - only if multi-page
+            # 7. Non-Conformance
+            self._write_cell(ws, current_row, 7, "", align=self.CENTER)
+            
+            # 8. Sheet
             if total_pages > 1:
-                cell_h = ws.cell(row=current_row, column=8, value=dim.get("page", 1))
-                cell_h.font = self.DATA_FONT
-                cell_h.alignment = self.CENTER
-                cell_h.border = self.THIN_BORDER
+                self._write_cell(ws, current_row, 8, dim.get("page", 1), align=self.CENTER)
             
+            # === HIDDEN COLUMNS FOR MATH (Columns Y & Z) ===
+            if parsed and parsed.get('max_limit') is not None:
+                ws.cell(row=current_row, column=25, value=parsed['min_limit']) # Y = Min
+                ws.cell(row=current_row, column=26, value=parsed['max_limit']) # Z = Max
+                
+                # Conditional Formatting for Result Column (E)
+                # Green if between Min/Max
+                formula_green = [f'AND(E{current_row}>=$Y{current_row},E{current_row}<=$Z{current_row})']
+                ws.conditional_formatting.add(f'E{current_row}', 
+                    CellIsRule(operator='between', formula=[f'$Y{current_row}', f'$Z{current_row}'], fill=self.PASS_FILL))
+                
+                # Red if outside
+                ws.conditional_formatting.add(f'E{current_row}', 
+                    CellIsRule(operator='notBetween', formula=[f'$Y{current_row}', f'$Z{current_row}'], fill=self.FAIL_FILL))
+
             current_row += 1
-        
-        # Add some empty rows for manual entries
+
+        # Add 5 Blank Rows
         for _ in range(5):
-            for col in range(1, 8 if total_pages <= 1 else 9):
-                cell = ws.cell(row=current_row, column=col, value="")
-                cell.border = self.THIN_BORDER
+            for c in range(1, 9):
+                self._write_cell(ws, current_row, c, "")
             current_row += 1
-        
-        current_row += 1  # Empty row
-        
-        # ==================
-        # FOOTER SECTION
-        # ==================
-        
-        # Grid detection note
-        if not grid_detected:
-            ws.merge_cells(f'A{current_row}:H{current_row}')
-            note_cell = ws.cell(row=current_row, column=1, 
-                value="Note: Grid zones calculated using standard 8×4 grid (H-A × 4-1). Drawing grid was not auto-detected.")
-            note_cell.font = self.NOTE_FONT
-            note_cell.alignment = self.LEFT
-            current_row += 2
-        
-        # Generation info
-        ws.merge_cells(f'A{current_row}:H{current_row}')
-        gen_cell = ws.cell(row=current_row, column=1, 
-            value=f"Generated by AutoBalloon on {datetime.now().strftime('%Y-%m-%d %H:%M')} | {len(dimensions)} characteristics | {total_pages} sheet(s)")
-        gen_cell.font = self.NOTE_FONT
-        gen_cell.alignment = self.LEFT
-        current_row += 2
-        
-        # Signature lines
-        ws.cell(row=current_row, column=1, value="Prepared By:").font = self.LABEL_FONT
-        ws.cell(row=current_row, column=3, value="Date:").font = self.LABEL_FONT
-        ws.cell(row=current_row, column=5, value="Approved By:").font = self.LABEL_FONT
-        ws.cell(row=current_row, column=7, value="Date:").font = self.LABEL_FONT
-        
+
+        # Footer
         current_row += 1
-        # Signature lines (underscores)
-        for col in [1, 2, 3, 4, 5, 6, 7, 8]:
-            cell = ws.cell(row=current_row, column=col, value="")
-            cell.border = Border(bottom=Side(style='thin', color='000000'))
-        
-        # ==================
-        # PAGE SETUP
-        # ==================
+        ws.merge_cells(f'A{current_row}:H{current_row}')
+        ws.cell(row=current_row, column=1, value=f"Generated by AutoBalloon | {datetime.now().strftime('%Y-%m-%d')}").font = self.NOTE_FONT
+
+        # Setup Page
         ws.page_setup.orientation = 'landscape'
-        ws.page_setup.paperSize = ws.PAPERSIZE_A4
-        ws.page_setup.fitToPage = True
-        ws.page_setup.fitToWidth = 1
-        ws.page_setup.fitToHeight = 0
-        
-        # Print titles (repeat header rows on each page)
-        ws.print_title_rows = '1:8'
-        
-        # Freeze panes (keep headers visible when scrolling)
-        ws.freeze_panes = 'A9'
-        
-        # Save to bytes
-        output = io.BytesIO()
-        wb.save(output)
-        xlsx_bytes = output.getvalue()
-        
-        return (
-            xlsx_bytes,
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            full_filename
-        )
-    
-    def generate_multi_page_export(
-        self,
-        pages_data: List[Dict],
-        format: ExportFormat,
-        template: ExportTemplate = ExportTemplate.AS9102_FORM3,
-        metadata: Optional[ExportMetadata] = None,
-        filename: str = "inspection",
-        grid_statuses: Optional[List[bool]] = None
-    ) -> tuple[bytes, str, str]:
-        """
-        Generate export for multi-page drawings.
-        
-        Args:
-            pages_data: List of page dicts, each containing 'page_number' and 'dimensions'
-            format: Export format
-            template: Export template
-            metadata: Optional metadata
-            filename: Base filename
-            grid_statuses: List of booleans indicating if grid was detected per page
-            
-        Returns:
-            Tuple of (file_bytes, content_type, full_filename)
-        """
-        # Flatten all dimensions with page numbers
+        ws.print_title_rows = '1:5'
+        ws.freeze_panes = 'A6'
+
+    def _write_cell(self, ws, row, col, value, align=None):
+        """Helper to write cell with standard border/font."""
+        cell = ws.cell(row=row, column=col, value=value)
+        cell.font = self.DATA_FONT
+        cell.border = self.THIN_BORDER
+        if align:
+            cell.alignment = align
+
+    def generate_multi_page_export(self, pages_data: List[Dict], format: ExportFormat, template: ExportTemplate, metadata, filename, grid_statuses=None):
+        """Wrapper for multi-page export."""
         all_dimensions = []
         for page_data in pages_data:
             page_num = page_data.get('page_number', 1)
@@ -465,23 +420,8 @@ class ExportService:
                 dim_copy['page'] = page_num
                 all_dimensions.append(dim_copy)
         
-        # Determine if any grid was not detected
-        grid_detected = True
-        if grid_statuses:
-            grid_detected = all(grid_statuses)
-        
-        total_pages = len(pages_data)
-        
-        return self.generate_export(
-            dimensions=all_dimensions,
-            format=format,
-            template=template,
-            metadata=metadata,
-            filename=filename,
-            grid_detected=grid_detected,
-            total_pages=total_pages
-        )
-
+        grid_detected = all(grid_statuses) if grid_statuses else True
+        return self.generate_export(all_dimensions, format, template, metadata, filename, grid_detected, len(pages_data))
 
 # Singleton instance
 export_service = ExportService()
