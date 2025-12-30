@@ -64,6 +64,18 @@ class BoundingBox(BaseModel):
             object.__setattr__(self, 'center_y', (self.ymin + self.ymax) / 2)
 
 
+class ParsedValues(BaseModel):
+    """Parsed numerical data for validation and export"""
+    nominal: float
+    upper_tol: float = 0.0
+    lower_tol: float = 0.0
+    max_limit: float
+    min_limit: float
+    precision: int = 3
+    units: str = "in"  # 'in' or 'mm'
+    tolerance_type: str = "bilateral" # 'bilateral', 'limit', 'basic', 'max', 'min'
+
+
 class Dimension(BaseModel):
     """A detected dimension with its location and metadata"""
     id: int
@@ -74,6 +86,9 @@ class Dimension(BaseModel):
     page: int = 1
     manually_added: bool = False
     manually_moved: bool = False
+    
+    # New field for engineering data
+    parsed: Optional[ParsedValues] = None
     
     class Config:
         from_attributes = True
