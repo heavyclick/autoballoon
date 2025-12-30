@@ -1,4 +1,5 @@
 import React from 'react';
+import { API_BASE_URL } from '../constants/config';
 
 /**
  * PropertiesPanel.jsx
@@ -48,6 +49,43 @@ export function PropertiesPanel({ selectedDimension, onUpdate }) {
   const updateRoot = (field, value) => {
     onUpdate(selectedDimension.id, { [field]: value });
   };
+
+  // Trigger calculation when inputs change
+  React.useEffect(() => {
+    const fetchSampling = async () => {
+        const lotSize = getVal('lot_size');
+        const aql = getVal('aql');
+        const level = getVal('inspection_level');
+
+        if (lotSize > 0) {
+            try {
+                const res = await fetch(`${API_BASE_URL}/sampling/calculate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        lot_size: Number(lotSize), 
+                        aql: parseFloat(aql), 
+                        level: level 
+                    })
+                });
+                const data = await res.json();
+                if (data.sample_size) {
+                    updateParsed('sample_size', data.sample_size);
+                }
+            } catch (e) {
+                console.error("Sampling calc failed", e);
+            }
+        }
+    };
+
+    // Debounce slightly to avoid too many requests
+    const timer = setTimeout(fetchSampling, 500);
+    return () => clearTimeout(timer);
+  }, [
+    selectedDimension?.parsed?.lot_size, 
+    selectedDimension?.parsed?.aql, 
+    selectedDimension?.parsed?.inspection_level
+  ]);
 
   return (
     <div className="w-80 bg-[#161616] border-r border-[#2a2a2a] flex flex-col h-full overflow-y-auto text-gray-300 font-sans">
