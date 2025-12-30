@@ -22,7 +22,7 @@ from services.export_service import export_service
 # FIX: Import the alignment service for robust revision comparison
 from services.alignment_service import alignment_service
 # NEW: Import Region Routes for Smart Ballooning
-from api import region_routes
+from . import region_routes
 
 router = APIRouter()  # NO PREFIX - endpoints registered at root, main.py handles routing
 
