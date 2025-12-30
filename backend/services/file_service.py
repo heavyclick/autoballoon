@@ -189,13 +189,22 @@ class FileService:
                                 
                                 # Convert to normalized 0-1000 scale
                                 # ymin in image = distance from top
+                                # Note: PDF y is distance from bottom.
+                                # Top of text is roughly y + fontSize. Bottom is y.
+                                # Image y is distance from top.
+                                # Image Top = h - (y + fontSize)
+                                # Image Bottom = h - y
+                                
+                                # Using len(text) * 0.6 * fontSize as approx width
+                                approx_width = fontSize * len(text) * 0.6
+                                
                                 vector_data.append({
                                     'text': text,
                                     'bbox': {
                                         'xmin': (x / w) * 1000,
                                         'ymin': ((h - y - fontSize) / h) * 1000, # Approx top
-                                        'xmax': ((x + fontSize * len(text) * 0.6) / w) * 1000, # Approx width
-                                        'ymax': ((h - y) / h) * 1000 # Approx bottom (baseline)
+                                        'xmax': ((x + approx_width) / w) * 1000, 
+                                        'ymax': ((h - y) / h) * 1000 # Approx bottom
                                     }
                                 })
                     
