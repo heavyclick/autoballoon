@@ -1,6 +1,6 @@
 """
 Pydantic models for AutoBalloon API
-Single source of truth for all data models
+Single source of truth for all data models.
 """
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
@@ -93,6 +93,7 @@ class BoundingBox(BaseModel):
     
     def __init__(self, **data):
         super().__init__(**data)
+        # Safe initialization for calculated fields
         if self.center_x is None:
             object.__setattr__(self, 'center_x', (self.xmin + self.xmax) / 2)
         if self.center_y is None:
@@ -101,7 +102,7 @@ class BoundingBox(BaseModel):
 
 class ParsedValues(BaseModel):
     """Parsed numerical data for validation and export"""
-    nominal: float
+    nominal: float = 0.0
     
     # Tolerancing
     tolerance_type: ToleranceType = ToleranceType.BILATERAL
@@ -168,15 +169,15 @@ class Dimension(BaseModel):
 
 class BillOfMaterialItem(BaseModel):
     """Item for Bill of Materials (Form 1)"""
-    part_name: str
-    part_number: str
-    qty: str
+    part_name: str = ""
+    part_number: str = ""
+    qty: str = "1"
 
 
 class SpecificationItem(BaseModel):
     """Item for Specifications (Form 2)"""
-    process: str
-    spec_number: str
+    process: str = ""
+    spec_number: str = ""
     code: Optional[str] = None
 
 
@@ -213,10 +214,9 @@ class PageResult(BaseModel):
 # Request/Response Models
 # ==================
 
-class ErrorResponse(BaseModel):
-    """Error details"""
-    code: ErrorCode
-    message: str
+class ProcessRequest(BaseModel):
+    """Request to process a blueprint"""
+    visitor_id: Optional[str] = None
 
 
 class ProcessResponse(BaseModel):
@@ -232,6 +232,12 @@ class ProcessResponse(BaseModel):
     error: Optional[dict] = None
 
 
+class ErrorResponse(BaseModel):
+    """Error details"""
+    code: ErrorCode
+    message: str
+
+
 class ExportMetadata(BaseModel):
     """Optional metadata for exports"""
     part_number: Optional[str] = None
@@ -239,6 +245,8 @@ class ExportMetadata(BaseModel):
     revision: Optional[str] = None
     serial_number: Optional[str] = None
     fai_report_number: Optional[str] = None
+    # Legacy support
+    materials: Optional[List[Dict]] = None
 
 
 class ExportRequest(BaseModel):
@@ -269,7 +277,10 @@ class UpdateBalloonResponse(BaseModel):
 class AddBalloonRequest(BaseModel):
     """Request to manually add a balloon"""
     value: str
-    bounding_box: BoundingBox
+    bounding_box: Optional[BoundingBox] = None
+    # Support simpler xy inputs used by frontend
+    x: Optional[float] = None
+    y: Optional[float] = None
     page: int = 1
 
 
@@ -277,6 +288,18 @@ class AddBalloonResponse(BaseModel):
     """Response after adding a balloon"""
     success: bool
     dimension: Optional[Dimension] = None
+
+
+class MoveBalloonRequest(BaseModel):
+    """Request to move a balloon"""
+    id: int
+    x: float
+    y: float
+
+
+class DeleteBalloonRequest(BaseModel):
+    """Request to delete a balloon"""
+    id: int
 
 
 class HealthResponse(BaseModel):
