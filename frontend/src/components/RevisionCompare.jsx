@@ -1,7 +1,7 @@
 /**
  * Revision Compare Component
  * Compare two drawing revisions and highlight only the changes
- * Updated to support promo access (not just isPro)
+ * Updated to use Backend Computer Vision (OpenCV) for alignment
  */
 
 import React, { useState, useRef } from 'react';
@@ -36,87 +36,54 @@ export function RevisionCompare({ onCompareComplete, canDownload = false, onShow
     setIsComparing(true);
     
     try {
-      // First, process both revisions
-      const formDataA = new FormData();
-      formDataA.append('file', revA.file);
+      const formData = new FormData();
+      formData.append('file_a', revA.file);
+      formData.append('file_b', revB.file);
       
-      const formDataB = new FormData();
-      formDataB.append('file', revB.file);
+      // Call new Computer Vision endpoint
+      const response = await fetch(`${API_BASE_URL}/compare`, { 
+        method: 'POST', 
+        body: formData 
+      });
       
-      const [responseA, responseB] = await Promise.all([
-        fetch(`${API_BASE_URL}/process`, { method: 'POST', body: formDataA }),
-        fetch(`${API_BASE_URL}/process`, { method: 'POST', body: formDataB })
-      ]);
+      const data = await response.json();
       
-      const [dataA, dataB] = await Promise.all([
-        responseA.json(),
-        responseB.json()
-      ]);
-      
-      if (dataA.success && dataB.success) {
-        // Compare dimensions
-        const dimsA = dataA.dimensions || [];
-        const dimsB = dataB.dimensions || [];
+      if (data.success) {
+        // Categorize dimensions based on the robust status returned by backend
+        // Backend returns: dimensions (active) and removed_dimensions (ghosts)
+        
+        const added = data.dimensions.filter(d => d.status === 'added');
+        const modified = data.dimensions.filter(d => d.status === 'modified');
+        const unchanged = data.dimensions.filter(d => d.status === 'unchanged');
+        const removed = data.removed_dimensions || [];
         
         const changes = {
-          added: [],      // In B but not in A
-          removed: [],    // In A but not in B
-          modified: [],   // In both but different values
-          unchanged: []   // Same in both
+          added,
+          modified,
+          removed,
+          unchanged
         };
-        
-        // Find dimensions in B
-        dimsB.forEach(dimB => {
-          const matchA = dimsA.find(dimA => {
-            // Match by similar position (within 5% tolerance)
-            const posMatch = 
-              Math.abs(dimA.bounding_box.xmin - dimB.bounding_box.xmin) < 50 &&
-              Math.abs(dimA.bounding_box.ymin - dimB.bounding_box.ymin) < 50;
-            return posMatch;
-          });
-          
-          if (!matchA) {
-            changes.added.push({ ...dimB, changeType: 'added' });
-          } else if (matchA.value !== dimB.value) {
-            changes.modified.push({ 
-              ...dimB, 
-              changeType: 'modified',
-              oldValue: matchA.value,
-              newValue: dimB.value 
-            });
-          } else {
-            changes.unchanged.push({ ...dimB, changeType: 'unchanged' });
-          }
-        });
-        
-        // Find removed dimensions (in A but not in B)
-        dimsA.forEach(dimA => {
-          const matchB = dimsB.find(dimB => {
-            const posMatch = 
-              Math.abs(dimA.bounding_box.xmin - dimB.bounding_box.xmin) < 50 &&
-              Math.abs(dimA.bounding_box.ymin - dimB.bounding_box.ymin) < 50;
-            return posMatch;
-          });
-          
-          if (!matchB) {
-            changes.removed.push({ ...dimA, changeType: 'removed' });
-          }
-        });
-        
+
         setComparisonResult({
-          revA: dataA,
-          revB: dataB,
+          revB: {
+            image: data.image,
+            metadata: data.metadata,
+            dimensions: data.dimensions // Contains aligned IDs
+          },
           changes,
-          summary: {
-            added: changes.added.length,
-            removed: changes.removed.length,
-            modified: changes.modified.length,
-            unchanged: changes.unchanged.length
+          summary: data.summary || {
+            added: added.length,
+            removed: removed.length,
+            modified: modified.length,
+            unchanged: unchanged.length
           }
         });
+      } else {
+        alert("Comparison failed: " + (data.detail || "Unknown error"));
       }
     } catch (err) {
       console.error('Comparison failed:', err);
+      alert("Network error during comparison");
     } finally {
       setIsComparing(false);
     }
@@ -132,17 +99,12 @@ export function RevisionCompare({ onCompareComplete, canDownload = false, onShow
     }
     
     if (comparisonResult && onCompareComplete) {
-      // Return only the changed dimensions (added + modified) for ballooning
-      const changedDimensions = [
-        ...comparisonResult.changes.added,
-        ...comparisonResult.changes.modified
-      ].map((dim, idx) => ({
-        ...dim,
-        id: idx + 1 // Re-number
-      }));
+      // Return the Revision B dimensions (which now have preserved Anchor IDs)
+      // Filter out 'removed' unless you want to show ghosts in the main editor
+      // Typically we only want active dimensions (Added + Modified + Unchanged)
       
       onCompareComplete({
-        dimensions: changedDimensions,
+        dimensions: comparisonResult.revB.dimensions,
         image: comparisonResult.revB.image,
         metadata: comparisonResult.revB.metadata,
         comparison: comparisonResult
@@ -175,7 +137,7 @@ export function RevisionCompare({ onCompareComplete, canDownload = false, onShow
               <span className="bg-gradient-to-r from-purple-500 to-pink-500 bg-clip-text text-transparent">
                 Delta FAI
               </span>
-              <span className="text-gray-400">- Revision Compare</span>
+              <span className="text-gray-400">- Revision Compare (AI Aligned)</span>
             </h2>
             <p className="text-gray-400 text-sm">Upload two revisions to find only what changed</p>
           </div>
@@ -292,6 +254,7 @@ export function RevisionCompare({ onCompareComplete, canDownload = false, onShow
                     <thead className="bg-[#161616] sticky top-0">
                       <tr>
                         <th className="px-4 py-2 text-left text-gray-400">Status</th>
+                        <th className="px-4 py-2 text-left text-gray-400">ID</th>
                         <th className="px-4 py-2 text-left text-gray-400">Zone</th>
                         <th className="px-4 py-2 text-left text-gray-400">Old Value</th>
                         <th className="px-4 py-2 text-left text-gray-400">New Value</th>
@@ -301,6 +264,7 @@ export function RevisionCompare({ onCompareComplete, canDownload = false, onShow
                       {comparisonResult.changes.added.map((dim, idx) => (
                         <tr key={`added-${idx}`} className="border-t border-[#1a1a1a]">
                           <td className="px-4 py-2"><span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">ADDED</span></td>
+                          <td className="px-4 py-2 text-white">#{dim.id}</td>
                           <td className="px-4 py-2 text-gray-300">{dim.zone || '—'}</td>
                           <td className="px-4 py-2 text-gray-500">—</td>
                           <td className="px-4 py-2 text-white font-mono">{dim.value}</td>
@@ -309,14 +273,16 @@ export function RevisionCompare({ onCompareComplete, canDownload = false, onShow
                       {comparisonResult.changes.modified.map((dim, idx) => (
                         <tr key={`modified-${idx}`} className="border-t border-[#1a1a1a]">
                           <td className="px-4 py-2"><span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded text-xs">MODIFIED</span></td>
+                          <td className="px-4 py-2 text-white">#{dim.id}</td>
                           <td className="px-4 py-2 text-gray-300">{dim.zone || '—'}</td>
-                          <td className="px-4 py-2 text-gray-500 font-mono line-through">{dim.oldValue}</td>
-                          <td className="px-4 py-2 text-white font-mono">{dim.newValue}</td>
+                          <td className="px-4 py-2 text-gray-500 font-mono line-through">{dim.old_value || dim.oldValue}</td>
+                          <td className="px-4 py-2 text-white font-mono">{dim.value}</td>
                         </tr>
                       ))}
                       {comparisonResult.changes.removed.map((dim, idx) => (
                         <tr key={`removed-${idx}`} className="border-t border-[#1a1a1a]">
                           <td className="px-4 py-2"><span className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs">REMOVED</span></td>
+                          <td className="px-4 py-2 text-white">#{dim.id}</td>
                           <td className="px-4 py-2 text-gray-300">{dim.zone || '—'}</td>
                           <td className="px-4 py-2 text-red-400 font-mono">{dim.value}</td>
                           <td className="px-4 py-2 text-gray-500">—</td>
@@ -334,21 +300,31 @@ export function RevisionCompare({ onCompareComplete, canDownload = false, onShow
 
               {/* Preview */}
               <div className="relative bg-[#0a0a0a] rounded-xl overflow-hidden">
-                <img src={comparisonResult.revB.image} alt="Rev B" className="w-full" />
+                <img src={comparisonResult.revB.image} alt="Rev B" className="w-full opacity-70" />
                 {/* Overlay changed dimensions */}
-                {[...comparisonResult.changes.added, ...comparisonResult.changes.modified].map((dim, idx) => {
+                {[...comparisonResult.changes.added, ...comparisonResult.changes.modified, ...comparisonResult.changes.removed].map((dim, idx) => {
                   const left = (dim.bounding_box.xmin + dim.bounding_box.xmax) / 2 / 10;
                   const top = (dim.bounding_box.ymin + dim.bounding_box.ymax) / 2 / 10;
+                  
+                  let colorClass = "bg-gray-500 border-gray-400 text-white";
+                  let label = dim.id;
+                  
+                  if (dim.status === 'added') {
+                      colorClass = 'bg-green-500 border-green-400 text-white';
+                  } else if (dim.status === 'modified') {
+                      colorClass = 'bg-yellow-500 border-yellow-400 text-black';
+                  } else if (dim.status === 'removed') {
+                      colorClass = 'bg-red-500 border-red-400 text-white opacity-50'; // Ghost style
+                  }
+
                   return (
                     <div
                       key={idx}
                       className="absolute transform -translate-x-1/2 -translate-y-1/2"
                       style={{ left: `${left}%`, top: `${top}%` }}
                     >
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm border-2 ${
-                        dim.changeType === 'added' ? 'bg-green-500 border-green-400 text-white' : 'bg-yellow-500 border-yellow-400 text-black'
-                      }`}>
-                        {dim.changeType === 'added' ? '+' : '~'}
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs border-2 ${colorClass}`}>
+                        {label}
                       </div>
                     </div>
                   );
@@ -376,7 +352,7 @@ export function RevisionCompare({ onCompareComplete, canDownload = false, onShow
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                     </svg>
-                    Comparing...
+                    Aligning & Comparing...
                   </>
                 ) : (
                   <>Compare Revisions</>
@@ -404,7 +380,7 @@ export function RevisionCompare({ onCompareComplete, canDownload = false, onShow
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                   </svg>
                 )}
-                Balloon Only Changes ({comparisonResult.summary.added + comparisonResult.summary.modified})
+                Import Changes
               </button>
             </>
           )}
