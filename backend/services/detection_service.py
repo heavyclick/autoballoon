@@ -3,12 +3,10 @@ Detection Service - AS9102 Compliant Dimension Detection
 Orchestrates OCR + Gemini Vision fusion for accurate dimension detection.
 
 Key improvements:
-1. Better OCR grouping - keeps modifiers with dimensions
-2. Vertical text grouping - "For 3.0in" + "Flange OD" below
-3. No over-grouping - two separate dimensions stay separate
-4. Location-based matching using Gemini coordinates
-5. Smart Parsing - Converts text strings to engineering math (Nominal/Tol)
-6. Unit Awareness - Auto-detects Imperial/Metric pages
+1. Smart Parsing: Converts text strings to Engineering Math (Nominal, Tolerances)
+2. GD&T Decomposition: Breaks down Feature Control Frames
+3. Unit Awareness: Auto-detects Imperial vs Metric pages
+4. Location Matching: Fuses Gemini semantic locations with accurate OCR text
 """
 import re
 from typing import Optional, List, Dict, Any, Tuple
@@ -201,8 +199,8 @@ class DetectionService:
         
         # 5. Sort reading order
         sorted_dims = self._sort_reading_order(matched)
-
-        # === NEW: Parse Values for Math ===
+        
+        # === NEW: Smart Parse Values (Math + GD&T) ===
         for dim in sorted_dims:
             dim.parsed = self._parse_dimension_value(dim.value, page_units)
         
@@ -238,55 +236,52 @@ class DetectionService:
             return []
 
     # ==========================
-    # SMART PARSING & UNITS
+    # SMART PARSING & GD&T
     # ==========================
     
     def _detect_page_units(self, raw_ocr: List[OCRDetection]) -> str:
-        """
-        Scan page text for unit indicators in title block or notes.
-        Defaults to 'in' if nothing found.
-        """
+        """Scan page text for unit indicators (IN, MM)."""
         if not raw_ocr:
             return "in"
             
-        # Join first 50 tokens (header/title block usually) and last 50 (notes)
         sample_text = " ".join([d.text.upper() for d in raw_ocr[:50] + raw_ocr[-50:]])
         
         if "MILLIMETER" in sample_text or " MM " in sample_text or "(MM)" in sample_text:
             return "mm"
         if "INCH" in sample_text or " IN " in sample_text:
             return "in"
-            
-        return "in" # Default to Imperial for Aerospace
+        return "in" 
 
     def _parse_dimension_value(self, value_str: str, page_units: str) -> Optional[ParsedValues]:
-        """
-        Parses a dimension string into nominal, upper, and lower limits.
-        Handles:
-        - 0.250 ± .005
-        - 0.250 + .005 / - .000
-        - 10.50 MAX
-        - 4X 0.250
-        """
+        """Parses dimensions AND GD&T frames."""
         try:
-            # 1. Clean the string
-            # Remove modifiers (4X, TYP), symbols (Ø, R), and noise
-            clean_val = value_str.upper().replace('Ø', '').replace('R', '')
-            clean_val = re.sub(r'\b[2468]X\b', '', clean_val) # Remove 4X, 2X
-            clean_val = clean_val.replace('TYP', '').replace('REF', '')
-            clean_val = clean_val.replace('"', '').replace('IN', '').replace('MM', '')
-            clean_val = clean_val.strip()
+            clean_val = value_str.strip()
+            
+            # 1. GD&T Check (Pipes or Box Start)
+            if '|' in clean_val or clean_val.startswith('['):
+                return self._parse_gdt_frame(clean_val, page_units)
+                
+            # GD&T Symbol Check
+            gdt_symbols = ['⌖', '⟂', '∥', '⏥', '⌓', '⏢', '↗', '◎', '∠']
+            if any(clean_val.startswith(s) for s in gdt_symbols):
+                return self._parse_gdt_frame(clean_val, page_units)
 
-            # Determine precision (decimal places of the nominal)
-            # Find the first number in the string
-            first_num_match = re.search(r'(\d+\.\d+)', clean_val)
+            # 2. Standard Dimension Parsing
+            # Remove modifiers for math check
+            clean_val_std = clean_val.upper().replace('Ø', '').replace('R', '')
+            clean_val_std = re.sub(r'\b[2468]X\b', '', clean_val_std)
+            clean_val_std = clean_val_std.replace('TYP', '').replace('REF', '')
+            clean_val_std = clean_val_std.replace('"', '').replace('IN', '').replace('MM', '')
+            clean_val_std = clean_val_std.strip()
+
+            first_num_match = re.search(r'(\d+\.\d+)', clean_val_std)
             precision = 3
             if first_num_match:
                 decimal_part = first_num_match.group(1).split('.')[1]
                 precision = len(decimal_part)
 
-            # === TYPE A: Bilateral (0.250 ± 0.005) or (0.250 +/- 0.005) ===
-            bilateral_match = re.search(r'([\d.]+)\s*(?:±|\+\/-)\s*([\d.]+)', clean_val)
+            # TYPE A: Bilateral (0.250 ± 0.005)
+            bilateral_match = re.search(r'([\d.]+)\s*(?:±|\+\/-)\s*([\d.]+)', clean_val_std)
             if bilateral_match:
                 nominal = float(bilateral_match.group(1))
                 tol = float(bilateral_match.group(2))
@@ -301,9 +296,8 @@ class DetectionService:
                     tolerance_type="bilateral"
                 )
 
-            # === TYPE B: Explicit Upper/Lower (0.250 +0.005 -0.001) or (0.250 +0.005/-0.001) ===
-            # Note: Handles space or slash separator
-            explicit_match = re.search(r'([\d.]+)\s*\+([\d.]+)\s*(?:/)?\s*[-−]([\d.]+)', clean_val)
+            # TYPE B: Explicit Upper/Lower (0.250 +0.005 -0.001)
+            explicit_match = re.search(r'([\d.]+)\s*\+([\d.]+)\s*(?:/)?\s*[-−]([\d.]+)', clean_val_std)
             if explicit_match:
                 nominal = float(explicit_match.group(1))
                 upper = float(explicit_match.group(2))
@@ -319,9 +313,9 @@ class DetectionService:
                     tolerance_type="limit"
                 )
 
-            # === TYPE C: Single Limit (10.50 MAX or 10.50 MIN) ===
-            if 'MAX' in clean_val:
-                val_match = re.search(r'([\d.]+)', clean_val)
+            # TYPE C: Single Limit (MAX/MIN)
+            if 'MAX' in clean_val.upper():
+                val_match = re.search(r'([\d.]+)', clean_val_std)
                 if val_match:
                     val = float(val_match.group(1))
                     return ParsedValues(
@@ -329,34 +323,16 @@ class DetectionService:
                         upper_tol=0.0,
                         lower_tol=0.0,
                         max_limit=val,
-                        min_limit=0.0, # Physical reality
+                        min_limit=0.0,
                         precision=precision,
                         units=page_units,
                         tolerance_type="max"
                     )
             
-            if 'MIN' in clean_val:
-                val_match = re.search(r'([\d.]+)', clean_val)
-                if val_match:
-                    val = float(val_match.group(1))
-                    return ParsedValues(
-                        nominal=val,
-                        upper_tol=0.0, # Open ended
-                        lower_tol=0.0,
-                        max_limit=9999.0, # Open ended
-                        min_limit=val,
-                        precision=precision,
-                        units=page_units,
-                        tolerance_type="min"
-                    )
-
-            # === TYPE D: Basic / Nominal Only (0.250) ===
-            # If we find just a single number at the start
-            basic_match = re.search(r'^([\d.]+)$', clean_val)
+            # TYPE D: Basic / Nominal
+            basic_match = re.search(r'^([\d.]+)$', clean_val_std)
             if basic_match:
                 val = float(basic_match.group(1))
-                # Apply standard block tolerances based on precision if needed
-                # For now, 0 tolerance
                 return ParsedValues(
                     nominal=val,
                     upper_tol=0.0,
@@ -370,14 +346,74 @@ class DetectionService:
 
             return None
 
-        except Exception as e:
-            # If parsing fails, just return None. We still have the string value.
+        except Exception:
+            # If parsing fails, allow standard dimension to pass through without parsing
             return None
 
+    def _parse_gdt_frame(self, value_str: str, page_units: str) -> Optional[ParsedValues]:
+        """Decomposes a Feature Control Frame."""
+        try:
+            parts = value_str.replace('[', '').replace(']', '').split('|')
+            if len(parts) < 2:
+                parts = value_str.split()
+            if not parts:
+                return None
+
+            # 1. Symbol
+            raw_symbol = parts[0].strip().upper()
+            symbol_map = {
+                '⌖': 'Position', 'POS': 'Position', 'POSITION': 'Position',
+                '⟂': 'Perpendicularity', 'PERP': 'Perpendicularity',
+                '∥': 'Parallelism', 'PAR': 'Parallelism',
+                '⏥': 'Flatness', 'FLAT': 'Flatness',
+                '⌓': 'Profile of Surface', 'PROF': 'Profile of Surface',
+                '◎': 'Concentricity', '↗': 'Runout', '⏢': 'Cylindricity'
+            }
+            gdt_symbol = symbol_map.get(raw_symbol, raw_symbol)
+
+            # 2. Tolerance & Modifiers
+            tol_part = parts[1].strip().upper()
+            tol_val_match = re.search(r'(\d+\.\d+)', tol_part)
+            gdt_tolerance = float(tol_val_match.group(1)) if tol_val_match else 0.0
+            
+            modifiers = []
+            if 'M' in tol_part or 'Ⓜ' in tol_part or '(M)' in tol_part:
+                modifiers.append("MMC")
+            if 'L' in tol_part or 'Ⓛ' in tol_part or '(L)' in tol_part:
+                modifiers.append("LMC")
+            
+            # 3. Datums
+            datums = []
+            for p in parts[2:]:
+                datum = re.sub(r'[^A-Z]', '', p.strip().upper())
+                if datum:
+                    datums.append(datum)
+            
+            return ParsedValues(
+                nominal=0.0,
+                upper_tol=gdt_tolerance,
+                lower_tol=0.0,
+                max_limit=gdt_tolerance,
+                min_limit=0.0,
+                precision=3,
+                units=page_units,
+                tolerance_type="gdt",
+                is_gdt=True,
+                gdt_symbol=gdt_symbol,
+                gdt_tolerance=gdt_tolerance,
+                gdt_modifiers=", ".join(modifiers) if modifiers else None,
+                gdt_datums=", ".join(datums) if datums else None
+            )
+        except Exception:
+            return ParsedValues(
+                nominal=0.0, max_limit=0.0, min_limit=0.0,
+                units=page_units, tolerance_type="gdt_error", is_gdt=True
+            )
+    
     # ==========================
     # CORE GROUPING & MATCHING
     # ==========================
-    
+
     def _group_ocr(self, detections: List[OCRDetection]) -> List[OCRDetection]:
         """
         Group OCR tokens intelligently:
