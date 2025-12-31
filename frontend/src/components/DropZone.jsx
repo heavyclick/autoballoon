@@ -1,5 +1,5 @@
 /**
- * DropZone.jsx - PRODUCTION READY WITH FULL FEATURE INTEGRATION
+ * DropZone.jsx - LAYOUT UPDATED
  * * Integrated Features:
  * 1. TableManager (Chart, Sheet, View, Fits, Method columns)
  * 2. PropertiesPanel (Sampling calculator, ISO fits, full spec)
@@ -8,7 +8,7 @@
  * 5. Revision Porting
  * 6. Non-dimensional feature type selection
  * 7. Method auto-detection
- * * FIXED: Regex syntax for Base64 image replacement
+ * * LAYOUT UPDATE: Full Width Canvas (Left), Sidebar (Right), Table (Bottom)
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -1170,20 +1170,14 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
         )}
       </div>
       
-      {/* Main Layout - Properties Panel + Canvas */}
+      {/* Main Layout - FULL WIDTH Canvas (Left) + Sidebar (Right) */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Properties Panel (Left Sidebar) */}
-        <PropertiesPanel
-          selectedDimension={dimensions.find(d => d.id === selectedDimId)}
-          onUpdate={handleUpdateDimension}
-        />
         
-        {/* Canvas Container */}
-        <div className="flex-1 overflow-auto p-6">
+        {/* Canvas Container - BIG and FULL WIDTH */}
+        <div className="flex-1 overflow-auto bg-[#0a0a0a] relative flex items-center justify-center">
           <div
             ref={containerRef}
-            className={`relative bg-[#0a0a0a] rounded-xl overflow-hidden select-none ${drawMode ? 'cursor-crosshair' : ''}`}
-            style={{ minHeight: '500px' }}
+            className={`relative inline-block select-none ${drawMode ? 'cursor-crosshair' : ''}`}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
@@ -1200,7 +1194,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
                 ref={imageRef}
                 src={currentImage}
                 alt={`Blueprint Page ${currentPage}`}
-                className="w-full h-auto pointer-events-none"
+                className="max-w-none h-auto pointer-events-none block"
                 crossOrigin="anonymous"
               />
             )}
@@ -1260,6 +1254,14 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
             {/* Preview watermark */}
             {!isPro && <PreviewWatermark isVisible={true} />}
           </div>
+        </div>
+
+        {/* Properties Panel (Right Sidebar - Fixed Width) */}
+        <div className="w-96 border-l border-[#2a2a2a] bg-[#161616] overflow-y-auto flex-shrink-0">
+          <PropertiesPanel
+            selectedDimension={dimensions.find(d => d.id === selectedDimId)}
+            onUpdate={handleUpdateDimension}
+          />
         </div>
       </div>
       
