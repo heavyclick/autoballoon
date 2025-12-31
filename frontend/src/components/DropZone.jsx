@@ -8,6 +8,7 @@
  * 5. Revision Porting
  * 6. Non-dimensional feature type selection
  * 7. Method auto-detection
+ * * FIXED: Regex syntax for Base64 image replacement
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -707,7 +708,7 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
     setNewBalloonType('dimension');
   };
 
-  // Download handlers
+  // Download handlers - FIXED REGEX SYNTAX HERE
   const handleDownloadPDF = async () => {
     if (!isPro) { onShowGlassWall(); return; }
     setIsDownloading(true);
@@ -724,7 +725,8 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
           }))
         : [{
             page_number: 1,
-            image: result.image?.replace(/^data:image/\w+;base64,/, '') || '',
+            // Fixed regex syntax below: added backslash escape before the forward slash
+            image: result.image?.replace(/^data:image\/\w+;base64,/, '') || '',
             width: result.metadata?.width || 1700,
             height: result.metadata?.height || 2200,
             dimensions: result.dimensions || [],
@@ -771,7 +773,8 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
           }))
         : [{
             page_number: 1,
-            image: result.image?.replace(/^data:image/\w+;base64,/, '') || '',
+            // Fixed regex syntax below
+            image: result.image?.replace(/^data:image\/\w+;base64,/, '') || '',
             width: result.metadata?.width || 1700,
             height: result.metadata?.height || 2200,
             dimensions: result.dimensions || [],
@@ -818,7 +821,8 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
           }))
         : [{
             page_number: 1,
-            image: result.image?.replace(/^data:image/\w+;base64,/, '') || '',
+            // Fixed regex syntax below
+            image: result.image?.replace(/^data:image\/\w+;base64,/, '') || '',
             width: result.metadata?.width || 1700,
             height: result.metadata?.height || 2200,
             dimensions: result.dimensions || [],
