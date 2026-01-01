@@ -3,6 +3,7 @@
   "version": "3.0.0",
   "description": "Canonical Inspection Engine - The Unified Surface",
   "private": true,
+  "packageManager": "npm@10.2.4",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
