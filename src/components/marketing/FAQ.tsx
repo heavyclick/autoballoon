@@ -29,7 +29,7 @@ export function FAQ() {
     {
       question: 'What happens when I hit my daily/monthly cap?',
       answer:
-        'You'll see a friendly notification. You can either upgrade to the next tier or wait for the daily reset. Your work is saved in your browser.',
+        "You'll see a friendly notification. You can either upgrade to the next tier or wait for the daily reset. Your work is saved in your browser.",
     },
     {
       question: 'Do you support ITAR/EAR compliance?',
