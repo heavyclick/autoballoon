@@ -5,6 +5,9 @@ import { LandingView } from '@/components/LandingView';
 import { ProcessingView } from '@/components/ProcessingView';
 import { WorkbenchView } from '@/components/WorkbenchView';
 
+// Force dynamic rendering to prevent static generation issues with Zustand + IndexedDB
+export const dynamic = 'force-dynamic';
+
 /**
  * The Unified Surface
  *
