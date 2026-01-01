@@ -1,6 +1,6 @@
 'use client';
 
-import { useAppStore } from '@/store/useAppStore';
+import { useAppStore, type ParsedDimension } from '@/store/useAppStore';
 
 /**
  * Table Manager - The Excel-Like Grid View
@@ -95,7 +95,7 @@ export function TableManager() {
                       value={char.parsed?.full_specification || char.value}
                       onChange={(e) =>
                         updateCharacteristic(char.id, {
-                          parsed: { ...char.parsed, full_specification: e.target.value },
+                          parsed: { ...char.parsed, full_specification: e.target.value } as ParsedDimension,
                         })
                       }
                       className="w-full h-full p-2 bg-transparent border-none outline-none focus:bg-brand-gray-900 font-mono text-yellow-500/80"
@@ -177,7 +177,7 @@ export function TableManager() {
                       value={char.parsed?.subtype || 'Linear'}
                       onChange={(e) =>
                         updateCharacteristic(char.id, {
-                          parsed: { ...char.parsed, subtype: e.target.value },
+                          parsed: { ...char.parsed, subtype: e.target.value } as ParsedDimension,
                         })
                       }
                       className="w-full h-full p-2 bg-transparent border-none outline-none focus:bg-brand-gray-900"
@@ -197,7 +197,7 @@ export function TableManager() {
                       value={char.parsed?.inspection_method || ''}
                       onChange={(e) =>
                         updateCharacteristic(char.id, {
-                          parsed: { ...char.parsed, inspection_method: e.target.value },
+                          parsed: { ...char.parsed, inspection_method: e.target.value } as ParsedDimension,
                         })
                       }
                       className="w-full h-full p-2 bg-transparent border-none outline-none focus:bg-brand-gray-900 text-blue-400"
