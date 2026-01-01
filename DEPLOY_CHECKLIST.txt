@@ -1,0 +1,136 @@
+╔══════════════════════════════════════════════════════════════╗
+║        AutoBalloon CIE - Railway Deployment Checklist       ║
+╚══════════════════════════════════════════════════════════════╝
+
+BEFORE YOU START:
+═════════════════════════════════════════════════════════════
+
+□ Supabase project created
+□ LemonSqueezy store created with 2 products
+□ Google Cloud APIs enabled (Vision + Gemini)
+□ All API keys collected and ready
+
+DEPLOYMENT STEPS (20-30 minutes):
+═════════════════════════════════════════════════════════════
+
+STEP 1: Create Railway Project (2 min)
+□ Go to: https://railway.app/new
+□ Click "Deploy from GitHub repo"
+□ Select: heavyclick/autoballoon
+□ Wait for initial deployment (will show errors - this is normal)
+
+STEP 2: Add Environment Variables (5 min)
+□ Click "Variables" tab in Railway
+□ Click "Raw Editor"
+□ Paste all environment variables (see RAILWAY_QUICK_START.md)
+□ Click "Save"
+□ Wait for redeploy
+
+STEP 3: Get Railway URL (1 min)
+□ Click "Settings" → "Domains"
+□ Copy Railway-provided URL (e.g., xxx.railway.app)
+□ Update NEXT_PUBLIC_APP_URL in Variables
+□ Save (triggers another deploy)
+
+STEP 4: Run Supabase Migration (5 min)
+□ Go to: https://supabase.com/dashboard
+□ Select your project → "SQL Editor" → "New Query"
+□ Copy entire file: supabase/migrations/001_initial_schema.sql
+□ Paste and click "Run"
+□ Verify 4 tables created in "Table Editor"
+
+STEP 5: Configure Supabase Auth (3 min)
+□ Authentication → URL Configuration
+□ Set Site URL to your Railway URL
+□ Add Redirect URL: https://your-app.railway.app/*
+□ Save
+
+STEP 6: Configure LemonSqueezy Webhook (3 min)
+□ Go to: https://app.lemonsqueezy.com
+□ Settings → Webhooks → Add Endpoint
+□ URL: https://your-app.railway.app/api/webhooks/lemonsqueezy
+□ Enable 5 subscription events
+□ Copy signing secret → Update Railway variable
+□ Save
+
+STEP 7: Wait for Deployment (2-3 min)
+□ Railway → Deployments tab
+□ Watch build logs
+□ Wait for "Active" status ✓
+
+STEP 8: Test Your App! (5 min)
+□ Visit Railway URL in browser
+□ Upload a sample PDF
+□ Verify workbench appears
+□ Click Export → Paywall should appear
+□ Test LemonSqueezy checkout redirect
+
+TESTING CHECKLIST:
+═════════════════════════════════════════════════════════════
+
+□ Landing page loads
+□ PDF upload works
+□ Processing completes
+□ Canvas renders with balloons
+□ Sidebar shows dimension details
+□ Table shows all characteristics
+□ Export button triggers paywall
+□ LemonSqueezy checkout redirects
+□ (After test subscription) Webhook events logged in Supabase
+□ User record created with is_pro: true
+□ Export works for subscribed users
+
+URLS YOU'LL NEED:
+═════════════════════════════════════════════════════════════
+
+Railway:           https://railway.app/new
+Supabase:          https://supabase.com/dashboard
+LemonSqueezy:      https://app.lemonsqueezy.com
+Google Cloud:      https://console.cloud.google.com
+
+GitHub Repo:       https://github.com/heavyclick/autoballoon
+
+LOCAL FILES:
+═════════════════════════════════════════════════════════════
+
+Read first:        RAILWAY_QUICK_START.md (step-by-step guide)
+Full guide:        RAILWAY_DEPLOYMENT.md (detailed troubleshooting)
+Migration SQL:     supabase/migrations/001_initial_schema.sql
+Environment vars:  .env.example (reference)
+
+TROUBLESHOOTING:
+═════════════════════════════════════════════════════════════
+
+Build fails?
+  → Check package.json has packageManager field
+  → Verify all environment variables set
+  → Check Railway build logs for specific errors
+
+Runtime errors?
+  → Verify Supabase migration ran successfully
+  → Check all API keys are correct
+  → View Railway deployment logs
+
+Webhook not working?
+  → Verify webhook URL in LemonSqueezy
+  → Check signing secret matches
+  → View Railway logs for webhook errors
+  → Test webhook in LemonSqueezy dashboard
+
+AFTER DEPLOYMENT:
+═════════════════════════════════════════════════════════════
+
+□ Monitor logs for 24 hours
+□ Create test subscription
+□ Verify full user flow works
+□ Set up usage reset cron (optional)
+□ Add custom domain (optional)
+□ 🚀 Launch to users!
+
+═════════════════════════════════════════════════════════════
+
+Estimated Time: 20-30 minutes
+Difficulty: Medium
+Status: Ready to deploy!
+
+Need help? See RAILWAY_QUICK_START.md for detailed instructions.

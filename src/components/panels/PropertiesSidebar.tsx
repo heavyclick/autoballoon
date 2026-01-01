@@ -1,6 +1,6 @@
 'use client';
 
-import { useAppStore } from '@/store/useAppStore';
+import { useAppStore, type ParsedDimension } from '@/store/useAppStore';
 import { useState } from 'react';
 
 /**
@@ -30,7 +30,10 @@ export function PropertiesSidebar() {
 
   const handleParsedUpdate = (field: string, value: any) => {
     updateCharacteristic(char.id, {
-      parsed: { ...char.parsed, [field]: value },
+      parsed: {
+        ...char.parsed,
+        [field]: value === undefined ? null : value
+      } as ParsedDimension,
     });
   };
 
