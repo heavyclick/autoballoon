@@ -113,7 +113,7 @@ export function TableManager() {
                           parsed: {
                             ...char.parsed,
                             nominal: parseFloat(e.target.value),
-                          },
+                          } as ParsedDimension,
                         })
                       }
                       className="w-full h-full p-2 bg-transparent border-none outline-none focus:bg-brand-gray-900 font-mono text-white"
@@ -131,7 +131,7 @@ export function TableManager() {
                           parsed: {
                             ...char.parsed,
                             plus_tolerance: parseFloat(e.target.value),
-                          },
+                          } as ParsedDimension,
                         })
                       }
                       className="w-full h-full p-2 bg-transparent border-none outline-none focus:bg-brand-gray-900 font-mono"
@@ -149,7 +149,7 @@ export function TableManager() {
                           parsed: {
                             ...char.parsed,
                             minus_tolerance: parseFloat(e.target.value),
-                          },
+                          } as ParsedDimension,
                         })
                       }
                       className="w-full h-full p-2 bg-transparent border-none outline-none focus:bg-brand-gray-900 font-mono"
