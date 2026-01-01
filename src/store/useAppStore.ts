@@ -7,12 +7,14 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import localforage from 'localforage';
 
-// Configure IndexedDB
-localforage.config({
-  name: 'AutoBalloon-CIE',
-  storeName: 'app_state',
-  description: 'Client-side project persistence',
-});
+// Configure IndexedDB only in browser environment
+if (typeof window !== 'undefined') {
+  localforage.config({
+    name: 'AutoBalloon-CIE',
+    storeName: 'app_state',
+    description: 'Client-side project persistence',
+  });
+}
 
 // Type Definitions
 export interface BoundingBox {
@@ -242,7 +244,13 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'cie-app-storage',
-      storage: createJSONStorage(() => localforage),
+      storage: typeof window !== 'undefined'
+        ? createJSONStorage(() => localforage)
+        : createJSONStorage(() => ({
+            getItem: () => null,
+            setItem: () => {},
+            removeItem: () => {},
+          })),
       partialize: (state) => ({
         // Only persist project data, not UI state
         project: state.project,
