@@ -5,7 +5,7 @@
  */
 
 // API Configuration
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://autoballoon-production.up.railway.app';
+export const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://autoballoon-production.up.railway.app/api';
 
 // File Upload Configuration
 export const MAX_FILE_SIZE_MB = 50;
