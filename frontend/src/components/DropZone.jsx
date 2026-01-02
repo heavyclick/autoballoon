@@ -1,5 +1,5 @@
 /**
- * DropZone.jsx - LAYOUT FIXED (FIT TO SCREEN)
+ * DropZone.jsx - PRODUCTION READY WITH FULL FEATURE INTEGRATION
  * * Integrated Features:
  * 1. TableManager (Chart, Sheet, View, Fits, Method columns)
  * 2. PropertiesPanel (Sampling calculator, ISO fits, full spec)
@@ -8,7 +8,7 @@
  * 5. Revision Porting
  * 6. Non-dimensional feature type selection
  * 7. Method auto-detection
- * * LAYOUT FIX: Canvas scales to fit screen (Left), Sidebar (Right)
+ * * FIXED: Regex syntax for Base64 image replacement
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -1170,14 +1170,20 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
         )}
       </div>
       
-      {/* Main Layout - FULL WIDTH Canvas (Left) + Sidebar (Right) */}
+      {/* Main Layout - Properties Panel + Canvas */}
       <div className="flex-1 flex overflow-hidden">
+        {/* Properties Panel (Left Sidebar) */}
+        <PropertiesPanel
+          selectedDimension={dimensions.find(d => d.id === selectedDimId)}
+          onUpdate={handleUpdateDimension}
+        />
         
-        {/* Canvas Container - BIG and FULL WIDTH */}
-        <div className="flex-1 overflow-auto bg-[#0a0a0a] relative flex items-center justify-center p-8">
+        {/* Canvas Container */}
+        <div className="flex-1 overflow-auto p-6">
           <div
             ref={containerRef}
-            className={`relative inline-block select-none shadow-2xl ${drawMode ? 'cursor-crosshair' : ''}`}
+            className={`relative bg-[#0a0a0a] rounded-xl overflow-hidden select-none ${drawMode ? 'cursor-crosshair' : ''}`}
+            style={{ minHeight: '500px' }}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
@@ -1188,16 +1194,14 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
                 setDrawEnd(null);
               }
             }}
-            style={{ width: 'fit-content', height: 'fit-content' }}
           >
             {currentImage && (
               <img
                 ref={imageRef}
                 src={currentImage}
                 alt={`Blueprint Page ${currentPage}`}
-                className="block max-w-full h-auto pointer-events-none"
+                className="w-full h-auto pointer-events-none"
                 crossOrigin="anonymous"
-                style={{ maxHeight: 'calc(100vh - 400px)' }} // Ensures very tall images don't force too much scrolling
               />
             )}
             
@@ -1257,18 +1261,10 @@ function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, curre
             {!isPro && <PreviewWatermark isVisible={true} />}
           </div>
         </div>
-
-        {/* Properties Panel (Right Sidebar - Fixed Width) */}
-        <div className="w-96 border-l border-[#2a2a2a] bg-[#161616] overflow-y-auto flex-shrink-0 z-20">
-          <PropertiesPanel
-            selectedDimension={dimensions.find(d => d.id === selectedDimId)}
-            onUpdate={handleUpdateDimension}
-          />
-        </div>
       </div>
       
       {/* Table Manager (Bottom Panel) */}
-      <div className="h-96 border-t-2 border-[#2a2a2a] z-30 bg-[#0a0a0a]">
+      <div className="h-96 border-t-2 border-[#2a2a2a]">
         <TableManager
           dimensions={dimensions}
           bomItems={bomItems}
