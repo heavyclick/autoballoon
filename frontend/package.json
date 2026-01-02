@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "start": "vite preview --host 0.0.0.0 --port ${PORT:-4173}"
+    "start": "serve dist -l $PORT"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
@@ -19,6 +19,7 @@
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-zoom-pan-pinch": "^3.4.0",
+    "serve": "^14.2.0",
     "tailwind-merge": "^2.2.0",
     "zustand": "^4.5.0"
   },
