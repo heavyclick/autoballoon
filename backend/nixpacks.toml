@@ -9,8 +9,3 @@ cmds = ["npm run build"]
 
 [start]
 cmd = "npm start"
-```
-
-**2. `backend/.nvmrc`**:
-```
-20
