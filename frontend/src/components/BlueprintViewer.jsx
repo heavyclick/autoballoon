@@ -1015,6 +1015,7 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
           onUpdate={handleUpdateDimension}
           onUpdateBOM={handleUpdateBOM}
           onUpdateSpec={handleUpdateSpec}
+          cmmResults={cmmResults}
         />
       </div>
     </div>

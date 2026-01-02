@@ -5,15 +5,16 @@
  */
 import React, { useState } from 'react';
 
-export function TableManager({ 
-  dimensions = [], 
-  bomItems = [], 
-  specItems = [], 
-  selectedId, 
-  onSelect, 
+export function TableManager({
+  dimensions = [],
+  bomItems = [],
+  specItems = [],
+  selectedId,
+  onSelect,
   onUpdate,
   onUpdateBOM,
-  onUpdateSpec
+  onUpdateSpec,
+  cmmResults = {}
 }) {
   const [activeTab, setActiveTab] = useState('characteristics');
 
@@ -73,6 +74,9 @@ export function TableManager({
           <th className="p-2 border-r border-b border-[#333] w-16 text-purple-400">Hole Fit</th>
           <th className="p-2 border-r border-b border-[#333] w-16 text-purple-400">Shaft Fit</th>
           <th className="p-2 border-r border-b border-[#333] w-24 text-blue-400">Method</th>
+          <th className="p-2 border-r border-b border-[#333] w-20 text-cyan-400">Grid/Zone</th>
+          <th className="p-2 border-r border-b border-[#333] w-24 text-orange-400">Results</th>
+          <th className="p-2 border-r border-b border-[#333] w-20 text-green-400">Pass/Fail</th>
         </tr>
       </thead>
       <tbody className="bg-[#161616] text-gray-300">
@@ -213,7 +217,7 @@ export function TableManager({
 
               {/* Method */}
               <td className="p-0 border-r border-[#2a2a2a]">
-                <select 
+                <select
                   className="w-full h-full p-2 bg-transparent border-none outline-none text-blue-400 focus:bg-[#000]"
                   value={getVal(dim, 'inspection_method', '')}
                   onChange={(e) => handleChange(dim.id, 'inspection_method', e.target.value)}
@@ -225,6 +229,31 @@ export function TableManager({
                   <option value="Visual">Visual</option>
                   <option value="Gage Block">Gage Block</option>
                 </select>
+              </td>
+
+              {/* Grid/Zone */}
+              <td className="p-2 border-r border-[#2a2a2a] text-cyan-400 font-mono text-center">
+                {dim.zone || '-'}
+              </td>
+
+              {/* Results (CMM Actual) */}
+              <td className="p-2 border-r border-[#2a2a2a] font-mono text-orange-400">
+                {cmmResults[dim.id]?.actual !== undefined
+                  ? (typeof cmmResults[dim.id].actual === 'number'
+                    ? cmmResults[dim.id].actual.toFixed(4)
+                    : cmmResults[dim.id].actual)
+                  : '-'}
+              </td>
+
+              {/* Pass/Fail */}
+              <td className="p-2 border-r border-[#2a2a2a] text-center font-bold">
+                {cmmResults[dim.id]?.status ? (
+                  <span className={cmmResults[dim.id].status === 'PASS' ? 'text-green-500' : 'text-red-500'}>
+                    {cmmResults[dim.id].status}
+                  </span>
+                ) : (
+                  <span className="text-gray-600">-</span>
+                )}
               </td>
             </tr>
           );
