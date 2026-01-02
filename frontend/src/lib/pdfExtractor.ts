@@ -150,9 +150,7 @@ async function renderPageToImage(page: any): Promise<string> {
 /**
  * Layer B: OCR Fallback using Google Cloud Vision
  */
-async function runOCRFallback(imageBase64: string, pageNum: number): Promise<void> {
-  const store = useAppStore.getState();
-
+async function runOCRFallback(imageBase64: string, _pageNum: number): Promise<void> {
   try {
     const response = await fetch('/api/ocr', {
       method: 'POST',
@@ -162,7 +160,7 @@ async function runOCRFallback(imageBase64: string, pageNum: number): Promise<voi
 
     if (!response.ok) throw new Error('OCR failed');
 
-    const data = await response.json();
+    await response.json();
 
     // Merge OCR results with existing page data
     // (This would update the vectorText array with OCR-detected text)

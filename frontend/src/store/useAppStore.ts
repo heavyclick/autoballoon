@@ -126,7 +126,7 @@ export interface AppState {
 
 export const useAppStore = create<AppState>()(
   persist(
-    (set, get) => ({
+    (set, _get) => ({
       // Initial State
       mode: 'landing',
       activeCharacteristicId: null,
@@ -158,7 +158,7 @@ export const useAppStore = create<AppState>()(
       setSelectedTool: (tool) => set({ selectedTool: tool }),
 
       // Project Actions
-      initializeProject: (file, metadata) =>
+      initializeProject: (_file, metadata) =>
         set({
           project: {
             metadata,

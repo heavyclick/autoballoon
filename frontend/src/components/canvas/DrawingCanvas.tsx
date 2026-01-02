@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useState, useCallback } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 

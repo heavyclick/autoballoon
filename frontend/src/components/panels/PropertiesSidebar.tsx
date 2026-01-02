@@ -24,10 +24,6 @@ export function PropertiesSidebar() {
 
   if (!char) return null;
 
-  const handleUpdate = (field: string, value: any) => {
-    updateCharacteristic(char.id, { [field]: value });
-  };
-
   const handleParsedUpdate = (field: string, value: any) => {
     updateCharacteristic(char.id, {
       parsed: {

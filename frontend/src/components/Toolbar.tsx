@@ -22,7 +22,6 @@ export function Toolbar() {
   const {
     isPaywallOpen,
     paywallTrigger,
-    usageData,
     canExport,
     triggerPaywall,
     closePaywall,
