@@ -9,8 +9,3 @@ cmds = ["npm run build"]
 
 [start]
 cmd = "npx serve dist -l $PORT"
-```
-
-**2. `frontend/.nvmrc`**:
-```
-20
