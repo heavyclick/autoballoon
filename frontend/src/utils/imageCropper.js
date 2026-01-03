@@ -27,9 +27,15 @@ export async function cropDimensionImage(blueprintImageSrc, dimension) {
       try {
         const { xmin, ymin, xmax, ymax } = dimension.bounding_box;
 
-        // Calculate text dimensions
-        const textWidth = xmax - xmin;
-        const textHeight = ymax - ymin;
+        // CRITICAL: Convert from normalized 0-1000 scale to actual pixel coordinates
+        const actualXmin = (xmin / 1000) * img.width;
+        const actualYmin = (ymin / 1000) * img.height;
+        const actualXmax = (xmax / 1000) * img.width;
+        const actualYmax = (ymax / 1000) * img.height;
+
+        // Calculate text dimensions in pixels
+        const textWidth = actualXmax - actualXmin;
+        const textHeight = actualYmax - actualYmin;
 
         // Smart padding based on text size
         // More padding for small text (to show context)
@@ -52,8 +58,8 @@ export async function cropDimensionImage(blueprintImageSrc, dimension) {
         }
 
         // Calculate crop region (constrained to image bounds)
-        const cropX = Math.max(0, xmin - paddingX);
-        const cropY = Math.max(0, ymin - paddingY);
+        const cropX = Math.max(0, actualXmin - paddingX);
+        const cropY = Math.max(0, actualYmin - paddingY);
         const cropWidth = Math.min(img.width - cropX, textWidth + 2 * paddingX);
         const cropHeight = Math.min(img.height - cropY, textHeight + 2 * paddingY);
 

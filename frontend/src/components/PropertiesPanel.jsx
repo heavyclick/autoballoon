@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../constants/config';
+import { cropDimensionImage } from '../utils/imageCropper';
 
 /**
  * PropertiesPanel.jsx
@@ -11,8 +12,11 @@ import { API_BASE_URL } from '../constants/config';
  * - Updated Tolerance UI for Fits (Hole/Shaft) and Bilateral (+/-)
  * - Added Sampling Calculator inputs (ANSI Z1.4)
  * - Expanded Subtypes to include Weld, Surface Finish, GD&T
+ * - Added zoomed dimension preview image
  */
-export function PropertiesPanel({ selectedDimension, onUpdate }) {
+export function PropertiesPanel({ selectedDimension, onUpdate, blueprintImage }) {
+  const [zoomedImage, setZoomedImage] = useState(null);
+  const [isLoadingImage, setIsLoadingImage] = useState(false);
   if (!selectedDimension) {
     return (
       <div className="w-64 bg-[#161616] border-r border-[#2a2a2a] p-6 text-center">
@@ -50,8 +54,27 @@ export function PropertiesPanel({ selectedDimension, onUpdate }) {
     onUpdate(selectedDimension.id, { [field]: value });
   };
 
+  // Load zoomed dimension image
+  useEffect(() => {
+    if (selectedDimension && blueprintImage) {
+      setIsLoadingImage(true);
+      setZoomedImage(null);
+      cropDimensionImage(blueprintImage, selectedDimension)
+        .then(img => {
+          setZoomedImage(img);
+          setIsLoadingImage(false);
+        })
+        .catch(error => {
+          console.error('Failed to crop dimension image:', error);
+          setIsLoadingImage(false);
+        });
+    } else {
+      setZoomedImage(null);
+    }
+  }, [selectedDimension?.id, blueprintImage]);
+
   // Trigger calculation when inputs change
-  React.useEffect(() => {
+  useEffect(() => {
     const fetchSampling = async () => {
         const lotSize = getVal('lot_size');
         const aql = getVal('aql');
@@ -100,7 +123,30 @@ export function PropertiesPanel({ selectedDimension, onUpdate }) {
       </div>
 
       <div className="p-4 space-y-6">
-        
+
+        {/* Section: Zoomed Dimension Preview */}
+        <div className="space-y-2">
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Dimension Preview</h3>
+          <div className="bg-[#0a0a0a] rounded-lg p-3 border border-[#2a2a2a]">
+            {isLoadingImage ? (
+              <div className="flex items-center justify-center h-24">
+                <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : zoomedImage ? (
+              <img
+                src={zoomedImage}
+                alt={`Dimension ${selectedDimension.id}`}
+                className="w-full h-auto rounded"
+                style={{ imageRendering: 'crisp-edges' }}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-24 text-gray-600 text-xs">
+                Preview not available
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Section: Identification */}
         <div className="space-y-3">
           <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Identification</h3>

@@ -476,24 +476,13 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Interactive DropZone - CENTERED */}
-      <section className="px-4 pb-16">
-        <div className="max-w-5xl mx-auto">
-          <div className="bg-[#161616] border border-[#2a2a2a] rounded-2xl p-6 md:p-8 relative overflow-hidden group">
-            {/* The DropZone now injects data into our editor state */}
-            <DropZone 
-               hasPromoAccess={hasAccess} 
-               userEmail={userEmail} 
-               onAnalysisComplete={handleAnalysisComplete} 
-            />
-            
-            {!isPro && (
-              <p className="text-center text-gray-500 text-sm mt-6">
-                Try it free • No signup required • Your data is never stored
-              </p>
-            )}
-          </div>
-        </div>
+      {/* Interactive DropZone - FULL SCREEN */}
+      <section>
+        <DropZone
+           hasPromoAccess={hasAccess}
+           userEmail={userEmail}
+           onAnalysisComplete={handleAnalysisComplete}
+        />
       </section>
 
       {/* SECURITY SECTION - CENTERED */}

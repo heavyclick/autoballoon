@@ -8,7 +8,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import JSZip from 'jszip';
 import { API_BASE_URL } from '../constants/config';
 import { TableManager } from './TableManager';
-import { DimensionSidebar } from './DimensionSidebar';
+import { PropertiesPanel } from './PropertiesPanel';
 import { CMMImport } from './CMMImport';
 import { PreviewWatermark } from './PreviewWatermark';
 import { DraggableBalloon } from './DraggableBalloon';
@@ -19,8 +19,6 @@ import { downloadBlob } from '../utils/downloadHelpers';
 export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall, currentPage, setCurrentPage, totalPages, visitorId, userEmail }) {
   const [isDownloading, setIsDownloading] = useState(false);
   const [selectedDimId, setSelectedDimId] = useState(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [visibleBalloons, setVisibleBalloons] = useState([]);
 
   // Multi-page support
   const hasMultiplePages = result.pages && result.pages.length > 1;
@@ -65,33 +63,7 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
       });
     });
     setSelectedDimId(null);
-    setSidebarOpen(false);
   }, [currentPage, result]);
-
-  // Real-time balloon pop animation effect
-  useEffect(() => {
-    // Clear visible balloons first
-    setVisibleBalloons([]);
-
-    // Stagger balloon appearances for animation effect
-    dimensions.forEach((dim, index) => {
-      setTimeout(() => {
-        setVisibleBalloons(prev => [...prev, dim.id]);
-      }, index * 60); // 60ms delay between each balloon
-    });
-  }, [dimensions.length, currentPage]);
-
-  // Handle balloon selection - open/close sidebar
-  const handleBalloonSelect = (dimId) => {
-    if (selectedDimId === dimId) {
-      // Clicking same balloon again closes sidebar
-      setSelectedDimId(null);
-      setSidebarOpen(false);
-    } else {
-      setSelectedDimId(dimId);
-      setSidebarOpen(true);
-    }
-  };
 
   // Initialize Dimension with better method detection
   function initializeDimension(d) {
@@ -971,49 +943,45 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
 
             {/* Leader lines */}
             <svg className="absolute inset-0 w-full h-full pointer-events-none">
-              {dimensions
-                .filter(dim => visibleBalloons.includes(dim.id))
-                .map((dim) => (
-                  <g key={`leader-${dim.id}`}>
-                    <line
-                      x1={`${dim.anchorX}%`}
-                      y1={`${dim.anchorY - 0.8}%`}
-                      x2={`${dim.balloonX}%`}
-                      y2={`${dim.balloonY}%`}
-                      stroke={selectedDimId === dim.id ? "#fff" : "#E63946"}
-                      strokeWidth={selectedDimId === dim.id ? "3" : "2"}
-                    />
-                    <circle
-                      cx={`${dim.anchorX}%`}
-                      cy={`${dim.anchorY - 0.8}%`}
-                      r="2.5"
-                      fill="#E63946"
-                    />
-                  </g>
-                ))}
+              {dimensions.map((dim) => (
+                <g key={`leader-${dim.id}`}>
+                  <line
+                    x1={`${dim.anchorX}%`}
+                    y1={`${dim.anchorY - 0.8}%`}
+                    x2={`${dim.balloonX}%`}
+                    y2={`${dim.balloonY}%`}
+                    stroke={selectedDimId === dim.id ? "#fff" : "#E63946"}
+                    strokeWidth={selectedDimId === dim.id ? "3" : "2"}
+                  />
+                  <circle
+                    cx={`${dim.anchorX}%`}
+                    cy={`${dim.anchorY - 0.8}%`}
+                    r="2.5"
+                    fill="#E63946"
+                  />
+                </g>
+              ))}
             </svg>
 
-            {/* Balloons - only show visible ones for pop animation */}
-            {dimensions
-              .filter(dim => visibleBalloons.includes(dim.id))
-              .map((dim) => (
-                <DraggableBalloon
-                  key={dim.id}
-                  dimension={dim}
-                  left={dim.balloonX}
-                  top={dim.balloonY}
-                  isSelected={selectedDimId === dim.id}
-                  onDelete={() => handleDeleteDimension(dim.id)}
-                  onDrag={handleBalloonDrag}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleBalloonSelect(dim.id);
-                  }}
-                  cmmResult={cmmResults[dim.id]}
-                  containerRef={containerRef}
-                  disabled={drawMode !== null}
-                />
-              ))}
+            {/* Balloons */}
+            {dimensions.map((dim) => (
+              <DraggableBalloon
+                key={dim.id}
+                dimension={dim}
+                left={dim.balloonX}
+                top={dim.balloonY}
+                isSelected={selectedDimId === dim.id}
+                onDelete={() => handleDeleteDimension(dim.id)}
+                onDrag={handleBalloonDrag}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedDimId(dim.id);
+                }}
+                cmmResult={cmmResults[dim.id]}
+                containerRef={containerRef}
+                disabled={drawMode !== null}
+              />
+            ))}
 
             {/* Selection rectangle */}
             {selectionRect && (
@@ -1030,17 +998,13 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
           </div>
         </div>
 
-        {/* Sliding Sidebar - appears when balloon is selected */}
-        {sidebarOpen && selectedDimId && (
-          <div className="w-96 transition-all duration-300 ease-in-out">
-            <DimensionSidebar
-              dimension={dimensions.find(d => d.id === selectedDimId)}
-              blueprintImage={currentImage}
-              onClose={() => {
-                setSelectedDimId(null);
-                setSidebarOpen(false);
-              }}
+        {/* Properties Sidebar - appears when balloon is selected (15% width) */}
+        {selectedDimId && (
+          <div className="w-[15vw] min-w-[280px] max-w-[400px] flex-shrink-0">
+            <PropertiesPanel
+              selectedDimension={dimensions.find(d => d.id === selectedDimId)}
               onUpdate={handleUpdateDimension}
+              blueprintImage={currentImage}
             />
           </div>
         )}

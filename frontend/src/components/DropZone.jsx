@@ -183,9 +183,12 @@ export function DropZone({ onBeforeProcess, hasPromoAccess = false, userEmail = 
     </>
   );
 
-  // Upload UI (initial state)
+  // Upload UI (initial state) - CENTERED with container
   return (
-    <div className="space-y-4">
+    <div className="px-4 pb-16">
+      <div className="max-w-5xl mx-auto">
+        <div className="bg-[#161616] border border-[#2a2a2a] rounded-2xl p-6 md:p-8 relative overflow-hidden">
+          <div className="space-y-4">
       <div className="flex justify-center gap-4">
         <button
           onClick={() => setShowRevisionCompare(true)}
@@ -254,6 +257,14 @@ export function DropZone({ onBeforeProcess, hasPromoAccess = false, userEmail = 
             <p className="text-red-500 text-sm">{error}</p>
           </div>
         )}
+      </div>
+      {!isPro && (
+        <p className="text-center text-gray-500 text-sm mt-6">
+          Try it free • No signup required • Your data is never stored
+        </p>
+      )}
+    </div>
+        </div>
       </div>
     </div>
   );
