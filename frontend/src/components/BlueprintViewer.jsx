@@ -912,10 +912,10 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
       </div>
 
       {/* Main Layout - Grid: Blueprint stretches full viewport, sidebar slides in */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex overflow-auto">
 
-        {/* Canvas Container - FULL VIEWPORT edge-to-edge */}
-        <div className="flex-1 overflow-auto bg-[#0a0a0a] relative">
+        {/* Canvas Container - Grows to fit image, no scrolling */}
+        <div className="bg-[#0a0a0a] relative">
           <div
             ref={containerRef}
             className={`relative inline-block select-none ${drawMode ? 'cursor-crosshair' : ''}`}
