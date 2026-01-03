@@ -241,7 +241,7 @@ export function LandingPage() {
 
 
   // ==========================================
-  // RENDER: EDITOR INTERFACE
+  // RENDER: EDITOR INTERFACE (Full Viewport)
   // ==========================================
   if (editorData) {
     const pageImage = editorData.image || (editorData.pages && editorData.pages[0]?.image);
@@ -287,7 +287,7 @@ export function LandingPage() {
           </div>
         </div>
 
-        {/* Main Workspace */}
+        {/* Main Workspace - NO PADDING */}
         <div className="flex-1 flex overflow-hidden">
           
           {/* LEFT: Properties Panel */}
@@ -298,7 +298,7 @@ export function LandingPage() {
             />
           </div>
 
-          {/* CENTER: Canvas / Image Viewer */}
+          {/* CENTER: Canvas / Image Viewer - FULL VIEWPORT */}
           <div 
             ref={containerRef}
             className={`flex-1 relative bg-[#050505] overflow-hidden ${tool === 'pan' ? 'cursor-grab active:cursor-grabbing' : tool === 'balloon' ? 'cursor-crosshair' : 'cursor-default'}`}
@@ -315,69 +315,66 @@ export function LandingPage() {
           >
             {/* The Scalable/Pannable Content */}
             <div 
-              className="absolute origin-top-left transition-transform duration-75 ease-out"
+              className="absolute inset-0"
               style={{ 
                 transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                width: '100%',
-                height: '100%'
+                transformOrigin: '0 0'
               }}
             >
-              <div className="relative inline-block">
-                {/* 1. Base Image */}
-                <img 
-                  ref={imageRef}
-                  src={`data:image/png;base64,${pageImage}`} 
-                  alt="Drawing" 
-                  className="max-w-none pointer-events-none select-none shadow-2xl"
-                  draggable={false}
-                />
+              {/* Base Image - FULL SIZE */}
+              <img 
+                ref={imageRef}
+                src={`data:image/png;base64,${pageImage}`} 
+                alt="Drawing" 
+                className="w-full h-full object-contain pointer-events-none select-none"
+                draggable={false}
+              />
 
-                {/* 2. Balloon Overlays */}
-                {editorData.dimensions.map((dim) => {
-                   const isSelected = dim.id === selectedId;
-                   // Convert 0-1000 normalized to %
-                   const style = {
-                     left: `${dim.bounding_box.xmin / 10}%`,
-                     top: `${dim.bounding_box.ymin / 10}%`,
-                     width: `${(dim.bounding_box.xmax - dim.bounding_box.xmin) / 10}%`,
-                     height: `${(dim.bounding_box.ymax - dim.bounding_box.ymin) / 10}%`
-                   };
-                   
-                   return (
-                     <div
-                       key={dim.id}
-                       style={style}
-                       onClick={(e) => { e.stopPropagation(); setSelectedId(dim.id); }}
-                       className={`
-                         absolute border-2 rounded-sm flex items-center justify-center group
-                         transition-colors duration-150
-                         ${isSelected ? 'border-blue-500 bg-blue-500/20 z-20' : 'border-red-500/50 hover:border-red-500 hover:bg-red-500/10 z-10'}
-                       `}
-                     >
-                       {/* Floating ID Bubble */}
-                       <div className={`
-                         absolute -top-3 -right-3 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm
-                         ${isSelected ? 'bg-blue-600 text-white scale-110' : 'bg-red-500 text-white'}
-                       `}>
-                         {dim.id}
-                       </div>
+              {/* 2. Balloon Overlays */}
+              {editorData.dimensions.map((dim) => {
+                 const isSelected = dim.id === selectedId;
+                 // Convert 0-1000 normalized to %
+                 const style = {
+                   left: `${dim.bounding_box.xmin / 10}%`,
+                   top: `${dim.bounding_box.ymin / 10}%`,
+                   width: `${(dim.bounding_box.xmax - dim.bounding_box.xmin) / 10}%`,
+                   height: `${(dim.bounding_box.ymax - dim.bounding_box.ymin) / 10}%`
+                 };
+                 
+                 return (
+                   <div
+                     key={dim.id}
+                     style={style}
+                     onClick={(e) => { e.stopPropagation(); setSelectedId(dim.id); }}
+                     className={`
+                       absolute border-2 rounded-sm flex items-center justify-center group
+                       transition-colors duration-150
+                       ${isSelected ? 'border-blue-500 bg-blue-500/20 z-20' : 'border-red-500/50 hover:border-red-500 hover:bg-red-500/10 z-10'}
+                     `}
+                   >
+                     {/* Floating ID Bubble */}
+                     <div className={`
+                       absolute -top-3 -right-3 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm
+                       ${isSelected ? 'bg-blue-600 text-white scale-110' : 'bg-red-500 text-white'}
+                     `}>
+                       {dim.id}
                      </div>
-                   );
-                })}
+                   </div>
+                 );
+              })}
 
-                {/* 3. Drawing Box (Visual Feedback) */}
-                {drawStart && drawCurrent && (
-                   <div 
-                     className="absolute border-2 border-purple-500 bg-purple-500/20 z-50 pointer-events-none"
-                     style={{
-                       left: Math.min(drawStart.x, drawCurrent.x),
-                       top: Math.min(drawStart.y, drawCurrent.y),
-                       width: Math.abs(drawCurrent.x - drawStart.x),
-                       height: Math.abs(drawCurrent.y - drawStart.y),
-                     }}
-                   />
-                )}
-              </div>
+              {/* 3. Drawing Box (Visual Feedback) */}
+              {drawStart && drawCurrent && (
+                 <div 
+                   className="absolute border-2 border-purple-500 bg-purple-500/20 z-50 pointer-events-none"
+                   style={{
+                     left: Math.min(drawStart.x, drawCurrent.x),
+                     top: Math.min(drawStart.y, drawCurrent.y),
+                     width: Math.abs(drawCurrent.x - drawStart.x),
+                     height: Math.abs(drawCurrent.y - drawStart.y),
+                   }}
+                 />
+              )}
             </div>
             
             {/* Canvas Controls Overlay */}
@@ -391,7 +388,7 @@ export function LandingPage() {
           </div>
         </div>
 
-        {/* BOTTOM: Table Manager */}
+        {/* BOTTOM: Table Manager - FULL WIDTH */}
         <div className="h-72 flex-shrink-0 flex flex-col bg-[#161616] border-t border-[#2a2a2a] relative z-50">
            <ProjectTabs activeTab={activeTab} onTabChange={setActiveTab} />
            
@@ -417,7 +414,7 @@ export function LandingPage() {
   }
 
   // ==========================================
-  // RENDER: MARKETING / UPLOAD INTERFACE
+  // RENDER: MARKETING / UPLOAD INTERFACE (Centered Container)
   // ==========================================
   return (
     <div className="min-h-screen bg-[#0d0d0d] text-white">
@@ -431,7 +428,7 @@ export function LandingPage() {
         />
       )}
       
-      {/* Hero Section */}
+      {/* Hero Section - CENTERED */}
       <section className="pt-24 pb-8 px-4">
         <div className="max-w-4xl mx-auto text-center">
           {/* Security Trust Badge */}
@@ -479,7 +476,7 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Interactive DropZone */}
+      {/* Interactive DropZone - CENTERED */}
       <section className="px-4 pb-16">
         <div className="max-w-5xl mx-auto">
           <div className="bg-[#161616] border border-[#2a2a2a] rounded-2xl p-6 md:p-8 relative overflow-hidden group">
@@ -499,7 +496,7 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* SECURITY SECTION */}
+      {/* SECURITY SECTION - CENTERED */}
       <section className="py-20 px-4 bg-gradient-to-b from-[#0a0a0a] to-[#0d0d0d]">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12">
@@ -537,10 +534,10 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* How It Works */}
+      {/* How It Works - CENTERED */}
       <HowItWorks />
 
-      {/* Compliance Section */}
+      {/* Compliance Section - CENTERED */}
       <section className="py-20 px-4 bg-[#0a0a0a]">
         <div className="max-w-6xl mx-auto">
           <h2 className="text-3xl font-bold text-white text-center mb-12">Built for Compliance</h2>
@@ -560,7 +557,7 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Pricing */}
+      {/* Pricing - CENTERED */}
       <section className="py-20 px-4">
         <div className="max-w-4xl mx-auto text-center">
           <h2 className="text-3xl font-bold text-white mb-4">Simple, Transparent Pricing</h2>
