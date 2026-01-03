@@ -914,11 +914,11 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
       {/* Main Layout - Grid: Blueprint stretches full viewport, sidebar slides in */}
       <div className="flex-1 flex overflow-hidden">
 
-        {/* Canvas Container - FULL VIEWPORT edge-to-edge */}
-        <div className="flex-1 overflow-auto bg-[#0a0a0a] relative">
+        {/* Canvas Container - FULL VIEWPORT edge-to-edge, scaled to fit */}
+        <div className="flex-1 bg-[#0a0a0a] relative flex items-center justify-center p-4">
           <div
             ref={containerRef}
-            className={`relative select-none w-full h-full ${drawMode ? 'cursor-crosshair' : ''}`}
+            className={`relative select-none ${drawMode ? 'cursor-crosshair' : ''}`}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
@@ -929,14 +929,14 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
                 setDrawEnd(null);
               }
             }}
-            style={{ width: 'fit-content', height: 'fit-content' }}
+            style={{ maxWidth: '100%', maxHeight: '100%', display: 'flex' }}
           >
             {currentImage && (
               <img
                 ref={imageRef}
                 src={currentImage}
                 alt={`Blueprint Page ${currentPage}`}
-                className="block w-full h-full object-contain pointer-events-none"
+                className="block max-w-full max-h-full w-auto h-auto object-contain pointer-events-none"
                 crossOrigin="anonymous"
               />
             )}
