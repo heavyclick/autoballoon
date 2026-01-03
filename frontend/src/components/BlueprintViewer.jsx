@@ -914,11 +914,11 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
       {/* Main Layout - Grid: Blueprint stretches full viewport, sidebar slides in */}
       <div className="flex-1 flex overflow-hidden">
 
-        {/* Canvas Container - FULL VIEWPORT edge-to-edge, scaled to fit */}
-        <div className="flex-1 bg-[#0a0a0a] relative flex items-center justify-center p-4">
+        {/* Canvas Container - FULL VIEWPORT edge-to-edge */}
+        <div className="flex-1 overflow-auto bg-[#0a0a0a] relative">
           <div
             ref={containerRef}
-            className={`relative select-none ${drawMode ? 'cursor-crosshair' : ''}`}
+            className={`relative inline-block select-none ${drawMode ? 'cursor-crosshair' : ''}`}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
@@ -929,14 +929,14 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
                 setDrawEnd(null);
               }
             }}
-            style={{ maxWidth: '100%', maxHeight: '100%', display: 'flex' }}
+            style={{ width: 'fit-content', height: 'fit-content' }}
           >
             {currentImage && (
               <img
                 ref={imageRef}
                 src={currentImage}
                 alt={`Blueprint Page ${currentPage}`}
-                className="block max-w-full max-h-full w-auto h-auto object-contain pointer-events-none"
+                className="block w-full h-auto pointer-events-none"
                 crossOrigin="anonymous"
               />
             )}
@@ -1011,7 +1011,7 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
       </div>
 
       {/* Table Manager (Bottom Panel) */}
-      <div className="h-48 border-t-2 border-[#2a2a2a] z-30 bg-[#0a0a0a]">
+      <div className="h-96 border-t-2 border-[#2a2a2a] z-30 bg-[#0a0a0a]">
         <TableManager
           dimensions={dimensions}
           bomItems={bomItems}
