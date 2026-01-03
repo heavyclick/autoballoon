@@ -1,4 +1,5 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { API_BASE_URL } from '../constants/config';
 
 /**
  * CMM Import Component (Production Ready)
@@ -10,12 +11,22 @@ export function CMMImport({ dimensions, onResultsImported }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState(null);
-  
+
   // Data State
   const [cmmFilename, setCmmFilename] = useState(null);
   const [mappings, setMappings] = useState([]); // Array of { cmmData, matchedBalloonId, score }
-  
+
   const fileInputRef = useRef(null);
+
+  // Auto-trigger file picker when modal opens
+  useEffect(() => {
+    if (isOpen && !mappings.length && fileInputRef.current) {
+      // Small delay to ensure modal is rendered
+      setTimeout(() => {
+        fileInputRef.current?.click();
+      }, 100);
+    }
+  }, [isOpen]);
 
   // ===========================================================================
   // 1. INTELLIGENT MATCHING ENGINE
@@ -108,7 +119,7 @@ export function CMMImport({ dimensions, onResultsImported }) {
 
     try {
       // NOTE: Ensure this endpoint exists in backend/api/routes.py
-      const response = await fetch('/api/cmm/parse', {
+      const response = await fetch(`${API_BASE_URL}/api/cmm/parse`, {
         method: 'POST',
         body: formData,
       });
