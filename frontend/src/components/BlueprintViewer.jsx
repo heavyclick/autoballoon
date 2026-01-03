@@ -936,7 +936,7 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
                 ref={imageRef}
                 src={currentImage}
                 alt={`Blueprint Page ${currentPage}`}
-                className="block w-full h-full object-contain pointer-events-none"
+                className="block w-full h-auto pointer-events-none"
                 crossOrigin="anonymous"
               />
             )}
