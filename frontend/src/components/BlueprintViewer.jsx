@@ -915,10 +915,10 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
       <div className="flex-1 flex overflow-hidden">
 
         {/* Canvas Container - FULL VIEWPORT edge-to-edge */}
-        <div className="flex-1 overflow-auto bg-[#0a0a0a] relative flex items-center justify-center">
+        <div className="flex-1 overflow-auto bg-[#0a0a0a] relative">
           <div
             ref={containerRef}
-            className={`relative inline-block select-none ${drawMode ? 'cursor-crosshair' : ''}`}
+            className={`relative select-none w-full h-full ${drawMode ? 'cursor-crosshair' : ''}`}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
@@ -936,7 +936,7 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
                 ref={imageRef}
                 src={currentImage}
                 alt={`Blueprint Page ${currentPage}`}
-                className="block w-full h-auto pointer-events-none"
+                className="block w-full h-full object-contain pointer-events-none"
                 crossOrigin="anonymous"
               />
             )}
