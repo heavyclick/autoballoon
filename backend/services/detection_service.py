@@ -633,23 +633,27 @@ class DetectionService:
         """Expand group by finding related tokens."""
         H_THRESH = 50   # Horizontal threshold
         V_THRESH = 25   # Vertical threshold (same line)
-        V_STACK = 35    # Vertical stacking threshold
-        
+        V_STACK = 50    # INCREASED from 35 to 50 - Vertical stacking threshold for multi-line dimensions
+
         changed = True
         while changed:
             changed = False
-            
+
             for i, det in enumerate(all_dets):
                 if i in used:
                     continue
-                
+
                 for g_det in list(group):
                     # Check for standard grouping logic
                     should_group = self._should_group(g_det, det, H_THRESH, V_THRESH, V_STACK)
-                    
+
                     # Check for fraction splitting logic (e.g. "5" and "1/8")
                     if not should_group:
                         should_group = self._should_group_fraction(g_det, det)
+
+                    # Check for vertical multi-line dimension stacking
+                    if not should_group:
+                        should_group = self._should_group_multiline(g_det, det)
 
                     if should_group:
                         group.append(det)
@@ -661,26 +665,62 @@ class DetectionService:
         """Specific logic to catch split fractions like '5' and '1/8'."""
         b1 = det1.bounding_box
         b2 = det2.bounding_box
-        
+
         # Must be very close horizontally
         h_dist = b2["xmin"] - b1["xmax"]
         if not (-5 < h_dist < 40): return False
-        
+
         # Must overlap vertically
         v_overlap = min(b1["ymax"], b2["ymax"]) - max(b1["ymin"], b2["ymin"])
         if v_overlap <= 0: return False
-        
+
         t1 = det1.text.strip()
         t2 = det2.text.strip()
-        
+
         # Case: Number followed by Fraction ("5" + "1/8")
         if t1.replace('.','',1).isdigit() and ('/' in t2 or t2 in ['1/2','1/4','3/4','1/8']):
             return True
-            
+
         # Case: Fraction followed by Unit ("1/2" + "in")
         if '/' in t1 and t2.lower() in ['in', 'mm', '"', "'"]:
             return True
-            
+
+        return False
+
+    def _should_group_multiline(self, det1: OCRDetection, det2: OCRDetection) -> bool:
+        """Specific logic to catch multi-line dimension text like '21 teeth' above '0.080in pitch'."""
+        b1 = det1.bounding_box
+        b2 = det2.bounding_box
+
+        # Must be vertically stacked (det2 below det1)
+        y_gap = b2["ymin"] - b1["ymax"]
+        if not (-5 < y_gap < 60):  # Allow up to 60px vertical gap
+            return False
+
+        # Must be X-aligned (horizontally close)
+        c1_x = (b1["xmin"] + b1["xmax"]) / 2
+        c2_x = (b2["xmin"] + b2["xmax"]) / 2
+        x_diff = abs(c2_x - c1_x)
+        if x_diff > 50:  # Must be within 50px horizontal alignment
+            return False
+
+        t1 = det1.text.strip()
+        t2 = det2.text.strip()
+
+        # Case 1: Number/measurement above, descriptor below
+        # "21 teeth" above "0.080in pitch"
+        # "0.160in" above "For 1/8\" max"
+        if re.match(r'^\d+\.?\d*', t1):  # Upper starts with number
+            if any(keyword in t2.lower() for keyword in ['for', 'pitch', 'teeth', 'tpi', 'threads', 'width', 'belt', 'max', 'min', 'engagement', 'per', 'inch']):
+                return True
+
+        # Case 2: Descriptive text above number
+        # "Teeth:" above "21"
+        # "Pitch:" above "0.080in"
+        if any(keyword in t1.lower() for keyword in ['teeth', 'pitch', 'thread', 'width', 'depth']):
+            if re.match(r'^\d+\.?\d*', t2):
+                return True
+
         return False
 
     def _should_group(
@@ -780,19 +820,32 @@ class DetectionService:
     
     def _should_merge_vertical(self, upper: str, lower: str) -> bool:
         """Should vertically stacked tokens merge?"""
-        
+
         # Tolerance below dimension
         if PATTERNS.is_tolerance(lower):
             return True
-        
+
         # Descriptive label below dimension (For 3.0in / Flange OD)
-        if re.match(r'^(?:Flange|Tube|OD|ID|Pipe|Thread)$', lower, re.IGNORECASE):
+        if re.match(r'^(?:Flange|Tube|OD|ID|Pipe|Thread|Pitch|Teeth|Width|Belt|Max|Min|Engagement|Size)$', lower, re.IGNORECASE):
             return True
-        
+
         # "OD" or "ID" labels
         if lower.upper() in ['OD', 'ID']:
             return True
-        
+
+        # "For" prefix indicating specification
+        if lower.lower().startswith('for '):
+            return True
+
+        # Measurement units/descriptors
+        if re.match(r'^(?:pitch|teeth|tpi|threads|engagement|width|length|depth|height)$', lower, re.IGNORECASE):
+            return True
+
+        # If upper is a number and lower contains "max", "min", or units
+        if re.match(r'^\d+\.?\d*["\']?$', upper.strip()):
+            if any(keyword in lower.lower() for keyword in ['max', 'min', 'for', 'pitch', 'teeth', 'width', 'belt']):
+                return True
+
         return False
     
     def _is_modifier(self, text: str) -> bool:
@@ -891,14 +944,17 @@ class DetectionService:
     ) -> List[Dimension]:
         """
         Match Gemini dimensions to OCR using LOCATION and EXCLUSIVE CONSUMPTION.
-        
+
         Fixes "Balloon Swapping":
         - Sorts Gemini dimensions by length (Longest first) -> "5 1/8" matches before "1"
         - Tracks 'used_ocr_ids' so "1" cannot steal the OCR box for "5 1/8"
         """
         matched = []
-        used_ocr_ids = set() # Critical: Once an OCR box is used, it is GONE.
-        
+        used_ocr_ids = set()  # Critical: Once an OCR box is used, it is GONE.
+
+        # DEBUG: Log what we're working with
+        logger.info(f"Matching: {len(gemini_dims)} Gemini dims -> {len(grouped_ocr)} OCR groups")
+
         # Pass 1: High Confidence Exact Matches (Text + Location)
         # Sort Gemini dims by length (descending) to match complex strings like "5 1/8" first
         gemini_dims_sorted = sorted(gemini_dims, key=lambda x: len(x.value), reverse=True)

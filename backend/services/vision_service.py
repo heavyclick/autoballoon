@@ -115,12 +115,56 @@ Extract ALL design characteristics from this drawing. For each one, provide:
 2. X position (0-100, 0=left, 100=right)
 3. Y position (0-100, 0=top, 100=bottom)
 
+## CRITICAL: MULTI-LINE DIMENSIONS - DO NOT SPLIT!
+
+When text is VERTICALLY STACKED (one line directly below another), they describe ONE feature and MUST be ONE entry!
+
+WRONG:
+{"value": "21 teeth", "x": 30, "y": 45}
+{"value": "0.080in pitch", "x": 30, "y": 48}
+
+CORRECT:
+{"value": "21 teeth 0.080in pitch", "x": 30, "y": 46}
+
+WRONG:
+{"value": "0.160in", "x": 50, "y": 60}
+{"value": "For 1/8\" max belt width", "x": 50, "y": 63}
+
+CORRECT:
+{"value": "0.160in For 1/8\" max belt width", "x": 50, "y": 61}
+
+WRONG:
+{"value": "0.250", "x": 40, "y": 30}
+{"value": "3:8 NPT", "x": 40, "y": 33}
+
+CORRECT:
+{"value": "0.250 3:8 NPT", "x": 40, "y": 31}
+
+## MULTI-LINE TEXT DETECTION RULE
+
+Before creating separate entries, ask:
+1. Are these texts vertically stacked? (one directly below the other)
+2. Are they X-aligned? (same horizontal position within 20 pixels)
+3. Do they describe the SAME feature? (e.g., "pitch" describes "teeth", "NPT" describes a dimension)
+
+If YES to all 3 → MERGE into ONE entry with Y at the vertical center!
+
+## POSITION ACCURACY REQUIREMENTS
+
+Your X,Y coordinates MUST be PRECISE:
+- X should be the CENTER of the dimension text horizontally
+- Y should be the CENTER of the dimension text vertically (for multi-line, use middle line)
+- If text spans from x=200 to x=350 on a 1000px wide image, report x = 27.5 (on 0-100 scale)
+- If text is at y=400 on a 1000px tall image, report y = 40
+
+DO NOT guess positions. Scan carefully and calculate the center point.
+
 ## WHAT TO EXTRACT (Design Characteristics)
 
 ### 1. DIMENSIONS WITH MODIFIERS - Keep Together!
 When a dimension has a quantity modifier, they are ONE characteristic:
 - "4X 0.2in" → ONE entry (not separate "4X" and "0.2in")
-- "2X For 6-32" → ONE entry  
+- "2X For 6-32" → ONE entry
 - "6X 6-32" → ONE entry
 - "3/8 NPT 4X" → ONE entry
 - "(2x) Ø5" → ONE entry
@@ -195,11 +239,13 @@ Return JSON with "dimensions" array. Each entry needs value, x, y:
     {"value": "0.188\" Wd. x 7/8\" Lg. Key", "x": 45, "y": 58},
     {"value": "1.312in", "x": 25, "y": 35},
     {"value": "[Pos|Ø.010(M)|A|B]", "x": 60, "y": 40},
+    {"value": "21 teeth 0.080in pitch", "x": 30, "y": 46},
     {"value": "Micrometer Graduation Marks: 0.001in", "x": 15, "y": 92}
   ]
 }
 
 ## CHECKLIST BEFORE RESPONDING
+☐ Did I MERGE vertically stacked text into ONE entry? (CRITICAL!)
 ☐ Did I keep modifiers WITH their dimensions? (4X, 2X, TYP)
 ☐ Did I keep compound dimensions together? (Wd. x Lg., Travel Length)
 ☐ Did I extract dimensions from text notes at bottom?
