@@ -286,7 +286,7 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
     } else if (drawMode === 'clearArea') {
       setDimensions(prev => prev.filter(d => {
         const isInside = d.balloonX >= finalMinX && d.balloonX <= finalMaxX &&
-                        d.balloonY >= finalMinY && d.balloonY <= finalMaxY;
+                         d.balloonY >= finalMinY && d.balloonY <= finalMaxY;
         return !isInside;
       }));
       setDrawMode(null);
@@ -914,11 +914,11 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
       {/* Main Layout - Grid: Blueprint stretches full viewport, sidebar slides in */}
       <div className="flex-1 flex overflow-hidden">
 
-        {/* Canvas Container - FULL VIEWPORT edge-to-edge */}
-        <div className="flex-1 overflow-auto bg-[#0a0a0a] relative flex items-center justify-center">
+        {/* Canvas Container - FIXED: Configured to "Contain" image (Fit to Screen) */}
+        <div className="flex-1 overflow-hidden bg-[#0a0a0a] relative flex items-center justify-center p-8">
           <div
             ref={containerRef}
-            className={`relative inline-block select-none ${drawMode ? 'cursor-crosshair' : ''}`}
+            className={`relative shadow-2xl select-none ${drawMode ? 'cursor-crosshair' : ''}`}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
@@ -929,19 +929,23 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
                 setDrawEnd(null);
               }
             }}
-            style={{ width: 'fit-content', height: 'fit-content' }}
+            // KEY FIX: Flex display makes the div shrink-wrap the image.
+            // maxWidth/maxHeight ensures it never exceeds the parent viewport.
+            style={{ maxWidth: '100%', maxHeight: '100%', display: 'flex' }}
           >
             {currentImage && (
               <img
                 ref={imageRef}
                 src={currentImage}
                 alt={`Blueprint Page ${currentPage}`}
-                className="block w-full h-auto pointer-events-none"
+                // KEY FIX: max-w-full/max-h-full constrains image to viewport.
+                // w-auto/h-auto maintains aspect ratio.
+                className="block max-w-full max-h-full w-auto h-auto object-contain pointer-events-none"
                 crossOrigin="anonymous"
               />
             )}
 
-            {/* Leader lines */}
+            {/* Leader lines - Will now scale perfectly with the image */}
             <svg className="absolute inset-0 w-full h-full pointer-events-none">
               {dimensions.map((dim) => (
                 <g key={`leader-${dim.id}`}>
@@ -952,6 +956,7 @@ export function BlueprintViewer({ result, onReset, token, isPro, onShowGlassWall
                     y2={`${dim.balloonY}%`}
                     stroke={selectedDimId === dim.id ? "#fff" : "#E63946"}
                     strokeWidth={selectedDimId === dim.id ? "3" : "2"}
+                    vectorEffect="non-scaling-stroke"
                   />
                   <circle
                     cx={`${dim.anchorX}%`}
