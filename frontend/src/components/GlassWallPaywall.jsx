@@ -1,5 +1,6 @@
 /**
- * GlassWallPaywall Component - Fixed
+ * GlassWallPaywall Component - Updated for Lite/Pro Plans
+ * Removed 24-hour pass, added Grandfather pricing display
  * Saves email and download preference to localStorage before redirect.
  */
 
@@ -10,8 +11,8 @@ import { API_BASE_URL } from '../constants/config';
 
 const BLURRED_EXCEL_IMAGE = '/images/excel-preview-blurred.png';
 
-export function GlassWallPaywall({ 
-  isOpen, 
+export function GlassWallPaywall({
+  isOpen,
   onClose,
   dimensionCount = 0,
   estimatedHours = 0,
@@ -20,19 +21,20 @@ export function GlassWallPaywall({
   const { sessionData, captureEmail, sessionId } = useGuestSession();
   const { isPro } = useAuth();
   const [email, setEmail] = useState('');
-  const [selectedPlan, setSelectedPlan] = useState(null);
+  const [selectedPlan, setSelectedPlan] = useState('pro_monthly');
+  const [billingCycle, setBillingCycle] = useState('monthly');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showPromoInput, setShowPromoInput] = useState(false);
   const [promoCode, setPromoCode] = useState('');
-  const [marketingConsent, setMarketingConsent] = useState(true); // Pre-checked by default
+  const [marketingConsent, setMarketingConsent] = useState(true);
 
   if (!isOpen || isPro) return null;
 
   const dims = dimensionCount || sessionData?.dimensionCount || 0;
   const rawMinutes = (dims * 1) + 10;
   const rawHours = rawMinutes / 60;
-  
+
   const formatTimeSaved = () => {
     if (rawMinutes < 60) return `${Math.round(rawMinutes)} minutes`;
     if (rawHours < 2) {
@@ -42,12 +44,26 @@ export function GlassWallPaywall({
     }
     return `${rawHours.toFixed(1)} hours`;
   };
-  
+
   const timeSavedDisplay = formatTimeSaved();
   const timeSavedShort = rawMinutes < 60 ? `~${Math.round(rawMinutes)}m` : `~${rawHours.toFixed(1)}h`;
   const seconds = processingSeconds || 12;
 
-  const handleProceedToCheckout = async (plan) => {
+  const plans = {
+    lite_monthly: { price: 20, originalPrice: 39, period: '/month' },
+    lite_annual: { price: 200, originalPrice: 390, period: '/year', monthlyEq: '$16.67/mo' },
+    pro_monthly: { price: 99, originalPrice: 199, period: '/month' },
+    pro_annual: { price: 990, originalPrice: 1990, period: '/year', monthlyEq: '$82.50/mo' },
+  };
+
+  const getCurrentPlanKey = () => {
+    if (selectedPlan.startsWith('lite')) {
+      return billingCycle === 'monthly' ? 'lite_monthly' : 'lite_annual';
+    }
+    return billingCycle === 'monthly' ? 'pro_monthly' : 'pro_annual';
+  };
+
+  const handleProceedToCheckout = async (planType) => {
     if (!email) {
       setError('Please enter your email to continue');
       return;
@@ -60,7 +76,7 @@ export function GlassWallPaywall({
 
     setIsLoading(true);
     setError(null);
-    setSelectedPlan(plan);
+    setSelectedPlan(planType);
 
     try {
       await captureEmail(email);
@@ -70,23 +86,19 @@ export function GlassWallPaywall({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email,
-          plan_type: plan,
+          plan_type: planType,
           session_id: sessionId,
-          promo_code: promoCode || undefined,
-          marketing_consent: marketingConsent,
+          discount_code: promoCode || undefined,
         }),
       });
 
       const data = await response.json();
 
       if (data.checkout_url) {
-        // FIX: Save email and download preference so LandingPage knows what to do on return
         localStorage.setItem('autoballoon_user_email', email);
         localStorage.setItem('autoballoon_pending_payment_session', sessionId);
-        
-        // Default preference: ZIP (contains everything) unless we add specific buttons later
-        localStorage.setItem('autoballoon_download_preference', 'zip'); 
-        
+        localStorage.setItem('autoballoon_download_preference', 'zip');
+
         window.location.href = data.checkout_url;
       } else {
         setError(data.message || 'Failed to create checkout. Please try again.');
@@ -99,13 +111,16 @@ export function GlassWallPaywall({
     }
   };
 
+  const currentPlanKey = getCurrentPlanKey();
+  const currentPlan = plans[currentPlanKey];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div 
+      <div
         className="absolute inset-0 bg-black/85 backdrop-blur-sm"
         onClick={onClose}
       />
-      
+
       <div className="relative bg-[#161616] border border-[#2a2a2a] rounded-2xl max-w-4xl w-full shadow-2xl my-8">
         {onClose && (
           <button
@@ -160,7 +175,7 @@ export function GlassWallPaywall({
                 <div>
                   <p className="text-green-400 font-medium text-sm">Zero-Storage Security</p>
                   <p className="text-green-500/70 text-xs mt-1">
-                    Your drawing was processed in memory and has already been deleted. 
+                    Your drawing was processed in memory and has already been deleted.
                     We never store your technical data.
                   </p>
                 </div>
@@ -168,8 +183,8 @@ export function GlassWallPaywall({
             </div>
 
             <p className="text-gray-400 mb-6">
-              Your <span className="text-white font-medium">AS9102 Form 3</span> is ready. 
-              To download and save <span className="text-amber-400 font-medium">{timeSavedDisplay}</span> of 
+              Your <span className="text-white font-medium">AS9102 Form 3</span> is ready.
+              To download and save <span className="text-amber-400 font-medium">{timeSavedDisplay}</span> of
               work, select a plan below.
             </p>
 
@@ -250,13 +265,14 @@ export function GlassWallPaywall({
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
-              Secured by LemonSqueezy • 256-bit encryption • ITAR/EAR Compliant
+              Secured by Dodo Payments. 256-bit encryption. ITAR/EAR Compliant
             </p>
           </div>
 
           <div className="bg-[#0d0d0d] p-8 rounded-r-2xl border-l border-[#2a2a2a]">
+            {/* Preview Image */}
             <div className="mb-6 rounded-lg overflow-hidden border border-[#2a2a2a]">
-              <img 
+              <img
                 src={BLURRED_EXCEL_IMAGE}
                 alt="AS9102 Form 3 Preview"
                 className="w-full h-32 object-cover object-top"
@@ -266,24 +282,65 @@ export function GlassWallPaywall({
               />
             </div>
 
+            {/* Billing Toggle */}
+            <div className="flex justify-center mb-6">
+              <div className="bg-[#1a1a1a] rounded-full p-1 flex text-sm">
+                <button
+                  onClick={() => setBillingCycle('monthly')}
+                  className={`px-4 py-1.5 rounded-full font-medium transition-all ${
+                    billingCycle === 'monthly'
+                      ? 'bg-[#E63946] text-white'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  Monthly
+                </button>
+                <button
+                  onClick={() => setBillingCycle('annual')}
+                  className={`px-4 py-1.5 rounded-full font-medium transition-all ${
+                    billingCycle === 'annual'
+                      ? 'bg-[#E63946] text-white'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  Annual (Save 2mo)
+                </button>
+              </div>
+            </div>
+
             <div className="space-y-4">
-              {/* 24-Hour Pass */}
-              <div 
+              {/* Lite Plan */}
+              <div
                 className={`relative p-4 rounded-xl border-2 transition-all cursor-pointer ${
-                  selectedPlan === 'pass_24h' 
-                    ? 'border-[#E63946] bg-[#E63946]/5' 
+                  selectedPlan.startsWith('lite')
+                    ? 'border-[#E63946] bg-[#E63946]/5'
                     : 'border-[#2a2a2a] hover:border-[#3a3a3a]'
                 }`}
-                onClick={() => setSelectedPlan('pass_24h')}
+                onClick={() => setSelectedPlan(billingCycle === 'monthly' ? 'lite_monthly' : 'lite_annual')}
               >
                 <div className="flex justify-between items-start mb-3">
                   <div>
-                    <h3 className="text-white font-bold">24-Hour Pass</h3>
-                    <p className="text-gray-500 text-sm">One-time purchase</p>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-white font-bold">Lite Plan</h3>
+                      <span className="bg-amber-500/20 text-amber-400 text-xs font-medium px-2 py-0.5 rounded">
+                        Grandfather Price
+                      </span>
+                    </div>
+                    <p className="text-gray-500 text-sm">10/day, 100/month</p>
                   </div>
                   <div className="text-right">
-                    <div className="text-2xl font-bold text-white">$49</div>
-                    <div className="text-gray-500 text-xs">one-time</div>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-gray-500 text-sm line-through">
+                        ${billingCycle === 'monthly' ? '39' : '390'}
+                      </span>
+                      <span className="text-2xl font-bold text-white">
+                        ${billingCycle === 'monthly' ? '20' : '200'}
+                      </span>
+                    </div>
+                    <div className="text-gray-500 text-xs">
+                      {billingCycle === 'monthly' ? '/month' : '/year'}
+                      {billingCycle === 'annual' && <span className="ml-1 text-green-400">($16.67/mo)</span>}
+                    </div>
                   </div>
                 </div>
                 <ul className="space-y-2 text-sm mb-4">
@@ -291,59 +348,74 @@ export function GlassWallPaywall({
                     <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Download this file immediately
+                    10 uploads per day
                   </li>
                   <li className="flex items-center gap-2 text-gray-400">
                     <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Unlimited exports for 24 hours
+                    100 uploads per month
                   </li>
                   <li className="flex items-center gap-2 text-gray-400">
                     <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    No subscription, no auto-renewal
+                    AS9102 Excel exports
                   </li>
                 </ul>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleProceedToCheckout('pass_24h');
+                    handleProceedToCheckout(billingCycle === 'monthly' ? 'lite_monthly' : 'lite_annual');
                   }}
-                  disabled={isLoading && selectedPlan === 'pass_24h'}
+                  disabled={isLoading && selectedPlan.startsWith('lite')}
                   className="w-full bg-[#2a2a2a] hover:bg-[#3a3a3a] text-white font-medium py-2.5 rounded-lg transition-colors disabled:opacity-50"
                 >
-                  {isLoading && selectedPlan === 'pass_24h' ? 'Processing...' : 'Unlock Now - $49'}
+                  {isLoading && selectedPlan.startsWith('lite')
+                    ? 'Processing...'
+                    : `Subscribe Lite - $${billingCycle === 'monthly' ? '20' : '200'}${billingCycle === 'monthly' ? '/mo' : '/yr'}`
+                  }
                 </button>
               </div>
 
-              {/* Pro Monthly */}
-              <div 
+              {/* Pro Plan */}
+              <div
                 className={`relative p-4 rounded-xl border-2 transition-all cursor-pointer ${
-                  selectedPlan === 'pro_monthly' 
-                    ? 'border-[#E63946] bg-[#E63946]/5' 
+                  selectedPlan.startsWith('pro')
+                    ? 'border-[#E63946] bg-[#E63946]/5'
                     : 'border-[#E63946]/50 hover:border-[#E63946]'
                 }`}
-                onClick={() => setSelectedPlan('pro_monthly')}
+                onClick={() => setSelectedPlan(billingCycle === 'monthly' ? 'pro_monthly' : 'pro_annual')}
               >
                 <div className="absolute -top-3 left-4">
                   <span className="bg-[#E63946] text-white text-xs font-bold px-3 py-1 rounded-full">
-                    EARLY ADOPTER - 50% OFF
+                    MOST POPULAR
                   </span>
                 </div>
-                
+
                 <div className="flex justify-between items-start mb-3 mt-2">
                   <div>
-                    <h3 className="text-white font-bold">Pro Monthly</h3>
-                    <p className="text-gray-500 text-sm">For professionals</p>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-white font-bold">Pro Plan</h3>
+                      <span className="bg-amber-500/20 text-amber-400 text-xs font-medium px-2 py-0.5 rounded">
+                        Grandfather Price
+                      </span>
+                    </div>
+                    <p className="text-gray-500 text-sm">Unlimited uploads</p>
                   </div>
                   <div className="text-right">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-gray-500 text-lg line-through">$199</span>
-                      <span className="text-2xl font-bold text-white">$99</span>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-gray-500 text-sm line-through">
+                        ${billingCycle === 'monthly' ? '199' : '1990'}
+                      </span>
+                      <span className="text-2xl font-bold text-white">
+                        ${billingCycle === 'monthly' ? '99' : '990'}
+                      </span>
                     </div>
-                    <div className="text-gray-500 text-xs">/month</div>
+                    <div className="text-gray-500 text-xs">
+                      {billingCycle === 'monthly' ? '/month' : '/year'}
+                      {billingCycle === 'annual' && <span className="ml-1 text-green-400">($82.50/mo)</span>}
+                    </div>
                   </div>
                 </div>
                 <ul className="space-y-2 text-sm mb-4">
@@ -351,7 +423,7 @@ export function GlassWallPaywall({
                     <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Unlimited drawings & exports
+                    Unlimited uploads
                   </li>
                   <li className="flex items-center gap-2 text-gray-400">
                     <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -363,72 +435,21 @@ export function GlassWallPaywall({
                     <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Multi-page PDF support
+                    Priority email support
                   </li>
                 </ul>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleProceedToCheckout('pro_monthly');
+                    handleProceedToCheckout(billingCycle === 'monthly' ? 'pro_monthly' : 'pro_annual');
                   }}
-                  disabled={isLoading && selectedPlan === 'pro_monthly'}
+                  disabled={isLoading && selectedPlan.startsWith('pro')}
                   className="w-full bg-[#E63946] hover:bg-[#d32f3d] text-white font-bold py-2.5 rounded-lg transition-colors disabled:opacity-50"
                 >
-                  {isLoading && selectedPlan === 'pro_monthly' ? 'Processing...' : 'Start Pro - $99/mo'}
-                </button>
-              </div>
-
-              {/* Pro Annual */}
-              <div 
-                className={`relative p-4 rounded-xl border-2 transition-all cursor-pointer ${
-                  selectedPlan === 'pro_annual' 
-                    ? 'border-[#E63946] bg-[#E63946]/5' 
-                    : 'border-[#2a2a2a] hover:border-[#3a3a3a]'
-                }`}
-                onClick={() => setSelectedPlan('pro_annual')}
-              >
-                <div className="absolute -top-3 right-4">
-                  <span className="bg-green-600 text-white text-xs font-bold px-3 py-1 rounded-full">
-                    SAVE $396/YEAR
-                  </span>
-                </div>
-                
-                <div className="flex justify-between items-start mb-3 mt-2">
-                  <div>
-                    <h3 className="text-white font-bold">Pro Annual</h3>
-                    <p className="text-gray-500 text-sm">Best value</p>
-                  </div>
-                  <div className="text-right">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-gray-500 text-lg line-through">$1,188</span>
-                      <span className="text-2xl font-bold text-white">$792</span>
-                    </div>
-                    <div className="text-gray-500 text-xs">/year ($66/mo)</div>
-                  </div>
-                </div>
-                <ul className="space-y-2 text-sm mb-4">
-                  <li className="flex items-center gap-2 text-gray-400">
-                    <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    Everything in Pro Monthly
-                  </li>
-                  <li className="flex items-center gap-2 text-gray-400">
-                    <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    2 months free ($396 savings)
-                  </li>
-                </ul>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleProceedToCheckout('pro_annual');
-                  }}
-                  disabled={isLoading && selectedPlan === 'pro_annual'}
-                  className="w-full bg-[#2a2a2a] hover:bg-[#3a3a3a] text-white font-medium py-2.5 rounded-lg transition-colors disabled:opacity-50"
-                >
-                  {isLoading && selectedPlan === 'pro_annual' ? 'Processing...' : 'Go Annual - $792/yr'}
+                  {isLoading && selectedPlan.startsWith('pro')
+                    ? 'Processing...'
+                    : `Subscribe Pro - $${billingCycle === 'monthly' ? '99' : '990'}${billingCycle === 'monthly' ? '/mo' : '/yr'}`
+                  }
                 </button>
               </div>
             </div>

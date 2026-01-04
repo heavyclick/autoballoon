@@ -57,8 +57,65 @@ MAGIC_LINK_EXPIRATION_MINUTES = 15
 FREE_TIER_LIMIT = 3  # Free drawings per month
 
 # ======================
-# Pricing
+# Dodo Payments Configuration
 # ======================
+DODO_PAYMENTS_API_KEY = os.getenv("DODO_PAYMENTS_API_KEY", "")
+DODO_PAYMENTS_WEBHOOK_SECRET = os.getenv("DODO_PAYMENTS_WEBHOOK_SECRET", "")
+DODO_PAYMENTS_ENVIRONMENT = os.getenv("DODO_PAYMENTS_ENVIRONMENT", "test_mode")  # test_mode or live_mode
+
+# Dodo Payments Product IDs
+DODO_LITE_MONTHLY_PRODUCT_ID = os.getenv("DODO_LITE_MONTHLY_PRODUCT_ID", "")
+DODO_LITE_ANNUAL_PRODUCT_ID = os.getenv("DODO_LITE_ANNUAL_PRODUCT_ID", "")
+DODO_PRO_MONTHLY_PRODUCT_ID = os.getenv("DODO_PRO_MONTHLY_PRODUCT_ID", "")
+DODO_PRO_ANNUAL_PRODUCT_ID = os.getenv("DODO_PRO_ANNUAL_PRODUCT_ID", "")
+
+# ======================
+# Pricing Plans
+# ======================
+PRICING_PLANS = {
+    "lite_monthly": {
+        "name": "Lite Plan",
+        "price": 20,
+        "original_price": 39,
+        "billing": "monthly",
+        "daily_limit": 10,
+        "monthly_limit": 100,
+        "display_as_unlimited": False,
+        "dodo_product_id": DODO_LITE_MONTHLY_PRODUCT_ID,
+    },
+    "lite_annual": {
+        "name": "Lite Plan",
+        "price": 200,  # $20 x 10 months (2 months free)
+        "original_price": 390,
+        "billing": "annual",
+        "daily_limit": 10,
+        "monthly_limit": 100,
+        "display_as_unlimited": False,
+        "dodo_product_id": DODO_LITE_ANNUAL_PRODUCT_ID,
+    },
+    "pro_monthly": {
+        "name": "Pro Plan",
+        "price": 99,
+        "original_price": 199,
+        "billing": "monthly",
+        "daily_limit": 75,
+        "monthly_limit": 500,
+        "display_as_unlimited": True,
+        "dodo_product_id": DODO_PRO_MONTHLY_PRODUCT_ID,
+    },
+    "pro_annual": {
+        "name": "Pro Plan",
+        "price": 990,  # $99 x 10 months (2 months free)
+        "original_price": 1990,
+        "billing": "annual",
+        "daily_limit": 75,
+        "monthly_limit": 500,
+        "display_as_unlimited": True,
+        "dodo_product_id": DODO_PRO_ANNUAL_PRODUCT_ID,
+    }
+}
+
+# Legacy pricing (for backward compatibility)
 PRICE_MONTHLY_USD = 99
 PRICE_MONTHLY_NGN = 99 * 1600
 GRANDFATHER_PRICE_USD = 99

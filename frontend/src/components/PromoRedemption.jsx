@@ -16,6 +16,7 @@ export function PromoRedemption({ promoCode, onSuccess, onClose }) {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
   const [hoursGranted, setHoursGranted] = useState(24);
+  const [marketingConsent, setMarketingConsent] = useState(true); // Pre-checked by default
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -34,7 +35,8 @@ export function PromoRedemption({ promoCode, onSuccess, onClose }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: email,
-          promo_code: promoCode
+          promo_code: promoCode,
+          marketing_consent: marketingConsent
         })
       });
       
@@ -161,7 +163,42 @@ export function PromoRedemption({ promoCode, onSuccess, onClose }) {
           {error && (
             <p className="text-red-400 text-sm mb-4">{error}</p>
           )}
-          
+
+          {/* Marketing Consent Checkbox */}
+          <label className="flex items-start gap-3 mb-4 cursor-pointer group">
+            <div className="relative flex-shrink-0 mt-0.5">
+              <input
+                type="checkbox"
+                checked={marketingConsent}
+                onChange={(e) => setMarketingConsent(e.target.checked)}
+                className="sr-only"
+              />
+              <div className={`w-5 h-5 rounded border-2 transition-all ${
+                marketingConsent
+                  ? 'bg-purple-600 border-purple-600'
+                  : 'border-gray-600 group-hover:border-gray-500'
+              }`}>
+                {marketingConsent && (
+                  <svg className="w-full h-full text-white p-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
+              </div>
+            </div>
+            <span className="text-gray-400 text-sm leading-tight">
+              I agree to receive promotional emails and product updates.{' '}
+              <a
+                href="/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-purple-400 hover:text-purple-300 underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                Terms of Service
+              </a>
+            </span>
+          </label>
+
           <button
             type="submit"
             disabled={isLoading}
@@ -170,9 +207,9 @@ export function PromoRedemption({ promoCode, onSuccess, onClose }) {
             {isLoading ? 'Activating...' : 'Activate Free Access'}
           </button>
         </form>
-        
+
         <p className="text-gray-600 text-xs text-center mt-4">
-          No spam. We'll only email you about your account.
+          Your email is used for account access. Unsubscribe anytime.
         </p>
       </div>
     </div>

@@ -124,14 +124,23 @@ VALID_PROMO_CODES = {
     "CREATOR2025": {"hours": None, "type": "lifetime_influencer", "max_redemptions": 50, "daily_cap": 75, "monthly_cap": 300},
 }
 
+# =============================================================================
+# USAGE CAPS - Updated for Lite/Pro Plans with Dodo Payments
+# =============================================================================
 USAGE_CAPS = {
+    # Promo codes (legacy)
     "linkedin_promo": {"daily": 20, "monthly": None},
     "twitter_promo": {"daily": 20, "monthly": None},
     "influencer": {"daily": 30, "monthly": None},
     "launch_promo": {"daily": 50, "monthly": None},
     "lifetime_influencer": {"daily": 75, "monthly": 300},
-    "pass_24h": {"daily": 50, "monthly": None},
-    "pro_monthly": {"daily": 100, "monthly": 500},
+    # NEW: Lite Plan - 10/day, 100/month
+    "lite_monthly": {"daily": 10, "monthly": 100},
+    "lite_annual": {"daily": 10, "monthly": 100},
+    # NEW: Pro Plan - 75/day, 500/month (displayed as "Unlimited")
+    "pro_monthly": {"daily": 75, "monthly": 500},
+    "pro_annual": {"daily": 75, "monthly": 500},
+    # Free tier (no subscription)
     "free": {"daily": 3, "monthly": 5},
 }
 
@@ -203,44 +212,52 @@ async def redeem_promo(request: Request):
     """Redeem a promo code for temporary free access."""
     try:
         db = get_supabase_client()
-        
+
         data = await request.json()
         email = data.get("email", "").lower().strip()
         code = data.get("promo_code", "").upper().strip()
-        
+        marketing_consent = data.get("marketing_consent", False)
+
         if not email or "@" not in email:
             return JSONResponse({"success": False, "message": "Invalid email"}, status_code=400)
-        
+
         if code not in VALID_PROMO_CODES:
             return JSONResponse({"success": False, "message": "Invalid promo code"}, status_code=400)
-        
+
         promo = VALID_PROMO_CODES[code]
-        
+
         existing = db.table("access_passes").select("id").eq("email", email).eq("pass_type", promo["type"]).execute()
         if existing.data and len(existing.data) > 0:
             return JSONResponse({
-                "success": False, 
+                "success": False,
                 "message": "You've already used this type of promo code"
             }, status_code=400)
-        
+
         expires_at = None if promo["hours"] is None else (datetime.utcnow() + timedelta(hours=promo["hours"])).isoformat()
-        
+
         insert_data = {
             "email": email,
             "pass_type": promo["type"],
             "granted_by": f"promo_{code}",
-            "is_active": True
+            "is_active": True,
+            "marketing_consent": bool(marketing_consent),
         }
+
+        # Add consent timestamp if user opted in
+        if marketing_consent:
+            insert_data["marketing_consent_at"] = datetime.utcnow().isoformat()
+
         if expires_at:
             insert_data["expires_at"] = expires_at
-        
+
         db.table("access_passes").insert(insert_data).execute()
-        
-        if promo["hours"]:
+
+        # Only send marketing emails if user consented
+        if promo["hours"] and marketing_consent:
             send_welcome_email(email, promo["hours"])
-        
+
         message = "Success! You now have lifetime Pro access." if promo["hours"] is None else f"Success! You have {promo['hours']} hours of free access."
-        
+
         return {
             "success": True,
             "message": message,
@@ -249,7 +266,7 @@ async def redeem_promo(request: Request):
             "is_lifetime": promo["hours"] is None,
             "daily_cap": promo.get("daily_cap", 50)
         }
-        
+
     except Exception as e:
         print(f"Promo error: {type(e).__name__}: {e}")
         return JSONResponse({"success": False, "message": f"Server error: {str(e)}"}, status_code=500)
