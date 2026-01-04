@@ -62,7 +62,14 @@ export function LandingPage() {
         try {
           const response = await fetch(`${API_BASE_URL}/access/check?email=${encodeURIComponent(email)}`);
           const data = await response.json();
-          if (data.has_access) setHasAccess(true);
+          if (data.has_access) {
+            setHasAccess(true);
+          } else {
+            // Access expired or invalid - clear localStorage
+            localStorage.removeItem('autoballoon_user_email');
+            setHasAccess(false);
+            setUserEmail('');
+          }
         } catch (err) {
           console.error('Access check error:', err);
         }
@@ -70,6 +77,42 @@ export function LandingPage() {
     };
     checkExistingAccess();
   }, []);
+
+  // ==========================================
+  // PERIODIC ACCESS REVALIDATION (5 minutes)
+  // ==========================================
+  useEffect(() => {
+    const email = localStorage.getItem('autoballoon_user_email');
+    if (!email || !hasAccess) return;
+
+    const checkAccess = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/access/check?email=${encodeURIComponent(email)}`);
+        const data = await response.json();
+
+        if (!data.has_access) {
+          // Access expired - clear localStorage and reset state
+          localStorage.removeItem('autoballoon_user_email');
+          setHasAccess(false);
+          setUserEmail('');
+
+          // Show expiry notification
+          alert('Your promotional access has expired. Please purchase a plan to continue using AutoBalloon Pro features.');
+
+          // Refresh page to reset state
+          window.location.reload();
+        }
+      } catch (err) {
+        console.error('Periodic access check error:', err);
+      }
+    };
+
+    // Check every 5 minutes (300,000 ms)
+    const intervalId = setInterval(checkAccess, 5 * 60 * 1000);
+
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId);
+  }, [hasAccess]);
 
   const handlePromoSuccess = (email) => {
     setUserEmail(email);
